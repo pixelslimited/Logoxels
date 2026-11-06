@@ -3,7 +3,7 @@
 // Private repo: put a read-only GitHub token (Contents: read) in /home/pixelsli/.logoxels_token.
 $repo = 'pixelslimited/Logoxels';
 $web = '/home/pixelsli/logoxels.pixelslimited.ng';
-$log = '/home/pixelsli/logoxels-deploy/deploy.log';
+$log = '/home/pixelsli/logoxels-deploy.log';
 $tokenFile = '/home/pixelsli/.logoxels_token';
 $token = is_file($tokenFile) ? trim(file_get_contents($tokenFile)) : '';
 
