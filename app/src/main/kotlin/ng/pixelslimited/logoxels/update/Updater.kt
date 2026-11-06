@@ -12,20 +12,19 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-/** Release found on the project's release page. [sha256] is null when the host gives no digest. */
-data class Release(val build: Int, val url: String, val size: Long, val sha256: String?)
+/** Newest build published on the Logoxels site. [sha256] is the expected hash of the APK. */
+data class Release(val build: Int, val url: String, val size: Long, val sha256: String)
 
 /**
  * Manual, opt-in updater. Nothing here runs unless the user taps "Check for updates":
- * it asks the public release page for the newest build, downloads the APK into app
- * cache, checks its SHA-256 when one is published, and hands it to the system installer.
+ * it asks logoxels.pixelslimited.ng for the newest build, downloads the APK into app
+ * cache, checks its SHA-256, and hands it to the system installer. Android itself only
+ * installs it over the existing app if it is signed with the same key.
  */
 object Updater {
-    private const val LATEST = "https://api.github.com/repos/pixelslimited/Logoxels/releases/latest"
-    private const val ASSET = "Logoxels.apk"
-
-    /** Release tags look like "build-42"; the number matches the app's versionCode. */
-    fun buildOf(tag: String): Int? = Regex("""build-(\d+)""").matchEntire(tag.trim())?.groupValues?.get(1)?.toIntOrNull()
+    private const val HOST = "logoxels.pixelslimited.ng"
+    private const val LATEST = "https://$HOST/update.json"
+    private const val FILE = "Logoxels.apk"
 
     fun isNewer(remote: Int, installed: Long): Boolean = remote.toLong() > installed
 
@@ -49,22 +48,17 @@ object Updater {
 
     private fun parse(json: String): Release {
         val o = JSONObject(json)
-        val build = buildOf(o.getString("tag_name")) ?: throw IOException("Unrecognised release name")
-        val assets = o.getJSONArray("assets")
-        for (i in 0 until assets.length()) {
-            val a = assets.getJSONObject(i)
-            if (a.getString("name") == ASSET) {
-                val digest = a.optString("digest", "").removePrefix("sha256:").lowercase().takeIf { it.length == 64 }
-                return Release(build, a.getString("browser_download_url"), a.optLong("size", -1), digest)
-            }
-        }
-        throw IOException("Release has no APK")
+        val url = o.getString("url")
+        if (URL(url).let { it.protocol != "https" || it.host != HOST }) throw IOException("Update file points somewhere unexpected")
+        val sha = o.getString("sha256").lowercase()
+        if (sha.length != 64) throw IOException("Update file has no checksum")
+        return Release(o.getInt("build"), url, o.optLong("size", -1), sha)
     }
 
     /** Blocking; call off the main thread. [onProgress] gets 0..1 (or -1 when the size is unknown). */
     fun download(ctx: Context, rel: Release, onProgress: (Float) -> Unit): File {
         val dir = File(ctx.cacheDir, "updates").apply { mkdirs() }
-        val out = File(dir, ASSET)
+        val out = File(dir, FILE)
         val c = URL(rel.url).openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 15_000
@@ -87,7 +81,7 @@ object Updater {
                 }
             }
             val got = sha.digest().joinToString("") { "%02x".format(it) }
-            if (rel.sha256 != null && got != rel.sha256) {
+            if (got != rel.sha256) {
                 out.delete()
                 throw IOException("Downloaded file failed its integrity check")
             }
