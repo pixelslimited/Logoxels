@@ -98,9 +98,6 @@ private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
 
 internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID, ICONS, TRACE, ARTBOARD }
 
-private val Ink = Color(0xFF111827)
-private val Muted = Color(0xFF9CA3AF)
-private val Accent = Color(0xFF2563EB)
 private val palette = listOf(
     0xFF111827, 0xFFFFFFFF, 0xFFEF4444, 0xFFF97316, 0xFFFACC15, 0xFF22C55E,
     0xFF14B8A6, 0xFF1E88E5, 0xFF6366F1, 0xFFA855F7, 0xFFEC4899, 0xFF78716C,
@@ -124,7 +121,7 @@ private fun Autosave(ed: Editor) {
     LaunchedEffect(ed.version, restored) {
         if (!restored) return@LaunchedEffect
         delay(800)
-        val json = Export.projectJson(ed.doc())
+        val json = Export.projectJson(ed.projectDoc())
         withContext(Dispatchers.IO) {
             val tmp = File(saveFile.path + ".tmp")
             tmp.writeText(json)
@@ -138,6 +135,7 @@ fun EditorScreen(ed: Editor) {
     var panel by remember { mutableStateOf(Panel.NONE) }
     val ctx = LocalContext.current
     Autosave(ed)
+    LaunchedEffect(Pal.dark) { ctx.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE).edit().putBoolean("dark", Pal.dark).apply() }
     fun report(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
     fun write(uri: android.net.Uri?, block: (OutputStream) -> Unit) {
         if (uri == null) return
@@ -169,7 +167,7 @@ fun EditorScreen(ed: Editor) {
         write(u) { Export.pdf(ed.doc(), it) }
     }
     val projOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u ->
-        write(u) { it.write(Export.projectJson(ed.doc()).toByteArray()) }
+        write(u) { it.write(Export.projectJson(ed.projectDoc()).toByteArray()) }
     }
     val traceIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         if (u != null) {
@@ -193,7 +191,7 @@ fun EditorScreen(ed: Editor) {
     }
     var updating by remember { mutableStateOf(false) }
     if (updating) UpdateDialog { updating = false }
-    Column(Modifier.fillMaxSize().background(Color(0xFFECEFF1)).safeDrawingPadding()) {
+    Column(Modifier.fillMaxSize().background(Back).safeDrawingPadding()) {
         TopBar(ed, { updating = true }) { op ->
             when (op) {
                 FileOp.SVG -> svgOut.launch("logo.svg")
@@ -238,6 +236,8 @@ fun EditorScreen(ed: Editor) {
 private fun EditorCanvas(ed: Editor) {
     val handleR = with(LocalDensity.current) { 24.dp.toPx() }
     val artPaint = remember { APaint().apply { color = android.graphics.Color.WHITE } }
+    val namePaint = remember { APaint().apply { isAntiAlias = true; isFakeBoldText = true } }
+    val frame = remember { APaint().apply { style = APaint.Style.STROKE } }
     val gridPaint = remember {
         APaint().apply {
             color = android.graphics.Color.argb(60, 17, 24, 39)
@@ -282,8 +282,10 @@ private fun EditorCanvas(ed: Editor) {
             nc.save()
             nc.translate(tx, ty)
             nc.scale(s, s)
-            artPaint.color = ed.background ?: android.graphics.Color.WHITE
-            nc.drawRect(ed.artboard, artPaint)
+            for (b in ed.boards) {
+                artPaint.color = b.bg ?: android.graphics.Color.WHITE
+                nc.drawRect(b.rect, artPaint)
+            }
             if (ed.showGrid) {
                 gridPaint.strokeWidth = 1f / s
                 val a = ed.artboard
@@ -294,6 +296,17 @@ private fun EditorCanvas(ed: Editor) {
             }
             Render.draw(nc, ed.items)
             nc.restore()
+            namePaint.textSize = 12.sp.toPx()
+            for ((i, b) in ed.boards.withIndex()) {
+                val tl = ed.toScreen(b.rect.left, b.rect.top)
+                val br = ed.toScreen(b.rect.right, b.rect.bottom)
+                val on = i == ed.activeBoard
+                frame.color = if (on) android.graphics.Color.rgb(37, 99, 235) else android.graphics.Color.argb(120, 128, 128, 128)
+                frame.strokeWidth = if (on) 3f else 1.5f
+                nc.drawRect(tl.x, tl.y, br.x, br.y, frame)
+                namePaint.color = if (Pal.dark) android.graphics.Color.rgb(209, 213, 219) else android.graphics.Color.rgb(75, 85, 99)
+                nc.drawText(b.name, tl.x, tl.y - 8f, namePaint)
+            }
         }
         ed.selectionBox()?.let { b ->
             val tl = ed.toScreen(b.left, b.top)
@@ -460,7 +473,7 @@ private fun EditorCanvas(ed: Editor) {
 private fun TopBar(ed: Editor, onUpdate: () -> Unit, onFile: (FileOp) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 8.dp, vertical = 4.dp),
+        Modifier.fillMaxWidth().background(Bar).padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Logoxels", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Ink, modifier = Modifier.weight(1f).padding(start = 4.dp))
@@ -477,6 +490,7 @@ private fun TopBar(ed: Editor, onUpdate: () -> Unit, onFile: (FileOp) -> Unit) {
                 DropdownMenuItem({ Text("Check for updates", fontSize = 14.sp) }, { menu = false; onUpdate() })
             }
         }
+        IconBtn(G.Theme, true) { Pal.dark = !Pal.dark }
         IconBtn(G.Undo, ed.canUndo) { ed.undo() }
         IconBtn(G.Redo, ed.canRedo) { ed.redo() }
         Spacer(Modifier.width(4.dp))
@@ -494,23 +508,28 @@ private fun IconBtn(g: G, enabled: Boolean, onClick: () -> Unit) {
 @Composable
 private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().background(Color.White).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 6.dp),
+        Modifier.fillMaxWidth().background(Bar).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ToolBtn(G.Select, "Select", ed.tool == Tool.SELECT) { ed.tool = Tool.SELECT }
-        ToolBtn(G.Rect, "Rect", ed.tool == Tool.RECT) { ed.tool = Tool.RECT }
-        ToolBtn(G.Oval, "Oval", ed.tool == Tool.ELLIPSE) { ed.tool = Tool.ELLIPSE }
-        ToolBtn(G.Polygon, "Polygon", ed.tool == Tool.POLYGON) { ed.tool = Tool.POLYGON }
-        ToolBtn(G.Star, "Star", ed.tool == Tool.STAR) { ed.tool = Tool.STAR }
-        ToolBtn(G.Line, "Line", ed.tool == Tool.LINE) { ed.tool = Tool.LINE }
-        ToolBtn(G.Pen, "Pen", ed.tool == Tool.PEN) { ed.tool = Tool.PEN }
+        ToolGroup(
+            ed, "Shapes",
+            listOf(
+                ToolEntry(G.Rect, "Rectangle", Tool.RECT), ToolEntry(G.Oval, "Oval", Tool.ELLIPSE),
+                ToolEntry(G.Polygon, "Polygon", Tool.POLYGON), ToolEntry(G.Star, "Star", Tool.STAR),
+                ToolEntry(G.Line, "Line", Tool.LINE),
+            ),
+        )
+        ToolGroup(ed, "Draw", listOf(ToolEntry(G.Pen, "Pen", Tool.PEN), ToolEntry(G.Sketch, "Sketch", Tool.SKETCH)))
         ToolBtn(G.Text, "Text", ed.tool == Tool.TEXT) { ed.tool = Tool.TEXT }
-        ToolBtn(G.Sketch, "Sketch", ed.tool == Tool.SKETCH) { ed.tool = Tool.SKETCH }
+        ToolGroup(
+            ed, "Edit",
+            listOf(
+                ToolEntry(G.Nodes, "Nodes", Tool.NODES), ToolEntry(G.Corner, "Corners", Tool.CORNERS),
+                ToolEntry(G.Scissors, "Scissors", Tool.SCISSORS), ToolEntry(G.Knife, "Knife", Tool.KNIFE),
+            ),
+        )
         ToolBtn(G.Eyedropper, "Eyedrop", ed.tool == Tool.EYEDROPPER) { ed.tool = Tool.EYEDROPPER }
-        ToolBtn(G.Knife, "Knife", ed.tool == Tool.KNIFE) { ed.tool = Tool.KNIFE }
-        ToolBtn(G.Nodes, "Nodes", ed.tool == Tool.NODES) { ed.tool = Tool.NODES }
-        ToolBtn(G.Scissors, "Scissors", ed.tool == Tool.SCISSORS) { ed.tool = Tool.SCISSORS }
-        ToolBtn(G.Corner, "Corners", ed.tool == Tool.CORNERS) { ed.tool = Tool.CORNERS }
         VerticalDivider(Modifier.height(36.dp).padding(horizontal = 4.dp))
         ToolBtn(G.Style, "Style", panel == Panel.STYLE) { onPanel(Panel.STYLE) }
         ToolBtn(G.Union, "Combine", panel == Panel.COMBINE) { onPanel(Panel.COMBINE) }
@@ -523,19 +542,41 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
     }
 }
 
+private class ToolEntry(val g: G, val label: String, val tool: Tool)
+
+/** A toolbar button that opens a small menu of related tools and remembers the last one used. */
+@Composable
+private fun ToolGroup(ed: Editor, name: String, entries: List<ToolEntry>) {
+    var open by remember { mutableStateOf(false) }
+    var last by remember { mutableStateOf(entries[0]) }
+    val active = entries.firstOrNull { it.tool == ed.tool }
+    Box {
+        ToolBtn((active ?: last).g, name, active != null) { open = true }
+        DropdownMenu(open, { open = false }) {
+            for (e in entries) {
+                DropdownMenuItem(
+                    { Text(e.label, fontSize = 14.sp, fontWeight = if (e === active) FontWeight.Bold else FontWeight.Normal) },
+                    { last = e; ed.tool = e.tool; open = false },
+                    leadingIcon = { Glyph(e.g, Ink) },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ToolBtn(g: G, label: String, selected: Boolean, onClick: () -> Unit) {
     Column(
         Modifier
             .width(68.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) Color(0xFFCCFBF1) else Color.Transparent)
+            .background(if (selected) SelBg else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Glyph(g, Ink)
-        Text(label, fontSize = 12.sp, color = Ink)
+        Text(label, fontSize = 12.sp, color = Ink, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
 
@@ -546,7 +587,7 @@ private fun PanelBox(content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Color(0xFFF8FAFC))
+            .background(PanelBg)
             .heightIn(max = 300.dp)
             .verticalScroll(rememberScrollState())
             .padding(12.dp),
@@ -556,12 +597,12 @@ private fun PanelBox(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun Label(text: String) {
-    Text(text, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Ink, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
+    Text(text, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
 }
 
 @Composable
 private fun Swatch(color: Int?, selected: Boolean, onClick: () -> Unit) {
-    val ring = if (selected) Accent else Color(0xFFD1D5DB)
+    val ring = if (selected) Accent else Line
     Box(
         Modifier
             .size(36.dp)
@@ -586,7 +627,7 @@ private fun ColorRow(current: Int?, allowNone: Boolean, onPick: (Int?) -> Unit) 
         if (current != null && current !in palette) Swatch(current, true) { open = true }
         palette.forEach { c -> Swatch(c, current == c) { onPick(c) } }
         Box(
-            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Color(0xFFD1D5DB), CircleShape).clickable { open = true },
+            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Line, CircleShape).clickable { open = true },
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawLine(Ink, Offset(size.width * .3f, size.height / 2f), Offset(size.width * .7f, size.height / 2f), strokeWidth = 3f)
@@ -645,7 +686,16 @@ private fun ArtboardPanel(ed: Editor) {
     val w = ed.artboard.width()
     val h = ed.artboard.height()
     PanelBox {
-        Label("Size")
+        Label("Artboards (tap one on the canvas or here to work on it)")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ed.boards.forEachIndexed { i, b ->
+                FilterChip(i == ed.activeBoard, { ed.selectBoard(i) }, { Text(b.name, fontSize = 12.sp) })
+            }
+            FilterChip(false, { ed.addBoard(w, h) }, { Text("Add artboard", fontSize = 12.sp) })
+            FilterChip(false, { ed.fitAll() }, { Text("Show all", fontSize = 12.sp) })
+            if (ed.boards.size > 1) FilterChip(false, { ed.removeBoard(ed.activeBoard) }, { Text("Delete this one", fontSize = 12.sp) })
+        }
+        Label("Size of the selected artboard")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
                 "Square" to (1000f to 1000f), "Landscape" to (1600f to 900f), "Portrait" to (900f to 1600f),
@@ -907,7 +957,7 @@ private fun LayersPanel(ed: Editor) {
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) Color(0xFFCCFBF1) else Color.Transparent)
+                    .background(if (on) SelBg else Color.Transparent)
                     .clickable { ed.selectFromLayers(item) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -916,7 +966,7 @@ private fun LayersPanel(ed: Editor) {
                         .size(20.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color(item.fill ?: item.stroke ?: 0xFF9CA3AF.toInt()))
-                        .border(1.dp, Color(0xFFD1D5DB), RoundedCornerShape(4.dp)),
+                        .border(1.dp, Line, RoundedCornerShape(4.dp)),
                 )
                 val tag = if (item.groupId != 0L) " - group ${item.groupId}" else ""
                 Text(

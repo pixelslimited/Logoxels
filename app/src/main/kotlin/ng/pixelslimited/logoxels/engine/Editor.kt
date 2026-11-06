@@ -8,6 +8,7 @@ import android.graphics.Region
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
@@ -46,21 +47,74 @@ class Guide(val vertical: Boolean, val pos: Float)
 
 /** Document + interaction state. UI reads [version] to know when to redraw. */
 class Editor {
-    val artboard = RectF(0f, 0f, 1000f, 1000f)
-
-    /** Artboard fill; null leaves it transparent in exports. */
-    var background by mutableStateOf<Int?>(null)
+    val boards = mutableStateListOf(Board("Artboard 1", RectF(0f, 0f, 1000f, 1000f), null))
+    var activeBoard by mutableIntStateOf(0)
         private set
 
-    fun doc() = Doc(items, artboard.width(), artboard.height(), background)
+    /** The artboard being edited. Snapping, export, fit-to-view and the Canvas panel all act on it. */
+    val artboard: RectF get() = boards[activeBoard].rect
+
+    /** Fill of the active artboard; null leaves it transparent in exports. */
+    val background: Int? get() = boards[activeBoard].bg
+
+    /** The active artboard on its own: art that touches it, moved so the board starts at 0,0. For export. */
+    fun doc(): Doc {
+        val a = artboard
+        val shown = items.filter { RectF.intersects(a, it.box()) }.map { it.copy().also { c -> c.offset(-a.left, -a.top) } }
+        return Doc(shown, a.width(), a.height(), background)
+    }
+
+    /** Everything with all artboards, in document space. For project files and autosave. */
+    fun projectDoc() = Doc(
+        items, artboard.width(), artboard.height(), background,
+        boards.map { Board(it.name, RectF(it.rect), it.bg) }, activeBoard,
+    )
 
     fun setArtboard(w: Float, h: Float) {
-        artboard.set(0f, 0f, w.coerceIn(100f, 8000f), h.coerceIn(100f, 8000f))
+        val a = artboard
+        a.set(a.left, a.top, a.left + w.coerceIn(100f, 8000f), a.top + h.coerceIn(100f, 8000f))
         touch()
     }
 
     fun chooseBackground(c: Int?) {
-        background = c
+        boards[activeBoard].bg = c
+        touch()
+    }
+
+    /** Adds an artboard to the right of the existing ones and switches to it. */
+    fun addBoard(w: Float, h: Float) {
+        val left = boards.maxOf { it.rect.right } + 150f
+        val top = boards[activeBoard].rect.top
+        boards.add(Board("Artboard ${boards.size + 1}", RectF(left, top, left + w.coerceIn(100f, 8000f), top + h.coerceIn(100f, 8000f)), null))
+        activeBoard = boards.lastIndex
+        fitView()
+        touch()
+    }
+
+    fun selectBoard(i: Int) {
+        if (i !in boards.indices) return
+        activeBoard = i
+        fitView()
+        touch()
+    }
+
+    /** Removes an artboard; the art on it stays in the document. */
+    fun removeBoard(i: Int) {
+        if (boards.size < 2 || i !in boards.indices) return
+        boards.removeAt(i)
+        activeBoard = if (i < activeBoard) activeBoard - 1 else min(activeBoard, boards.lastIndex)
+        fitView()
+        touch()
+    }
+
+    /** Zooms out to show every artboard. */
+    fun fitAll() {
+        val u = RectF(boards[0].rect)
+        for (b in boards) u.union(b.rect)
+        val s = min(viewW / u.width(), viewH / u.height()) * 0.92f
+        scale = s
+        tx = (viewW - u.width() * s) / 2f - u.left * s
+        ty = (viewH - u.height() * s) / 2f - u.top * s
         touch()
     }
 
@@ -158,8 +212,11 @@ class Editor {
     /** Replaces the whole document with [list] (opening a project) and clears history. */
     fun loadProject(doc: Doc) {
         val list = doc.items
-        artboard.set(0f, 0f, doc.w, doc.h)
-        background = doc.background
+        boards.clear()
+        if (doc.boards.isEmpty()) boards.add(Board("Artboard 1", RectF(0f, 0f, doc.w, doc.h), doc.background)) else boards.addAll(doc.boards)
+        activeBoard = doc.active.coerceIn(0, boards.lastIndex)
+        dupIds = emptySet()
+        dupMake = null
         items = list
         nextId = (list.maxOfOrNull { it.id } ?: 0L) + 1
         nextGroup = (list.maxOfOrNull { it.groupId } ?: 0L) + 1
@@ -199,8 +256,8 @@ class Editor {
         if (viewW <= 0f || viewH <= 0f) return
         val s = min(viewW / artboard.width(), viewH / artboard.height()) * 0.92f
         scale = s
-        tx = (viewW - artboard.width() * s) / 2f
-        ty = (viewH - artboard.height() * s) / 2f
+        tx = (viewW - artboard.width() * s) / 2f - artboard.left * s
+        ty = (viewH - artboard.height() * s) / 2f - artboard.top * s
     }
 
     fun toDoc(p: Offset) = Offset((p.x - tx) / scale, (p.y - ty) / scale)
@@ -278,8 +335,10 @@ class Editor {
         val xs = ArrayList<Float>()
         val ys = ArrayList<Float>()
         if (snapObjects) {
-            xs.add(artboard.left); xs.add(artboard.centerX()); xs.add(artboard.right)
-            ys.add(artboard.top); ys.add(artboard.centerY()); ys.add(artboard.bottom)
+            for (a in boards.map { it.rect }) {
+                xs.add(a.left); xs.add(a.centerX()); xs.add(a.right)
+                ys.add(a.top); ys.add(a.centerY()); ys.add(a.bottom)
+            }
             for (o in items) {
                 if (o.id in exclude || !o.visible) continue
                 val b = o.box()
@@ -392,6 +451,7 @@ class Editor {
         creating = null
         pushed = false
         downHitId = null
+        boards.indexOfFirst { it.rect.contains(downDoc.x, downDoc.y) }.let { if (it >= 0 && it != activeBoard) activeBoard = it }
         when (tool) {
             Tool.CORNERS, Tool.SCISSORS, Tool.TEXT, Tool.EYEDROPPER -> return Mode.PICK
             Tool.SKETCH -> {
@@ -476,6 +536,9 @@ class Editor {
                 dy += adj.y
                 val m = Matrix().apply { setTranslate(dx, dy) }
                 for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
+                val mx = dx
+                val my = dy
+                noteTransform { Matrix().apply { setTranslate(mx, my) } }
                 touch()
             }
             Mode.RESIZE -> dragResize(snapPoint(doc, selection))
@@ -488,6 +551,8 @@ class Editor {
                 }
                 val m = Matrix().apply { setRotate(deg, rotCenter.x, rotCenter.y) }
                 for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
+                val rd = deg
+                noteTransform { b -> Matrix().apply { setRotate(rd, b.centerX(), b.centerY()) } }
                 touch()
             }
             Mode.GUIDE -> {
@@ -527,6 +592,7 @@ class Editor {
             }
             Mode.NONE -> if (!moved && !multi && selection.isNotEmpty()) { selection = emptySet(); touch() }
             Mode.PICK -> if (!moved) {
+                val before = version
                 when (tool) {
                     Tool.NODES -> nodeTap()
                     Tool.SCISSORS -> scissorsTap()
@@ -534,13 +600,18 @@ class Editor {
                     Tool.EYEDROPPER -> eyedropTap()
                     else -> pickCorner()
                 }
+                if (version != before && (tool == Tool.SCISSORS || tool == Tool.EYEDROPPER)) tool = Tool.SELECT
             }
             Mode.PEN -> if (penClosing && !moved) penFinish(true)
             Mode.SKETCH -> finishSketch(moved)
             Mode.KNIFE -> {
                 val k = knife
                 knife = null
-                if (k != null && moved) cut(k.first, k.second)
+                if (k != null && moved) {
+                    val before = version
+                    cut(k.first, k.second)
+                    if (version != before) tool = Tool.SELECT
+                }
             }
             Mode.GUIDE -> {
                 val g = guides.getOrNull(guideIdx)
@@ -782,6 +853,7 @@ class Editor {
             selection = setOf(item.id)
         }
         sketchNote = shape.label()
+        tool = Tool.SELECT
     }
 
     // ---------- eyedropper ----------
@@ -1072,6 +1144,7 @@ class Editor {
             else newShape(kindFor(tool), RectF(d.x - h, d.y - h, d.x + h, d.y + h))
             items = items + item
             selection = setOf(item.id)
+            tool = Tool.SELECT
             touch()
         } else {
             val b = c.box()
@@ -1080,6 +1153,8 @@ class Editor {
                 undoStack.removeLastOrNull()
                 selection = emptySet()
                 touch()
+            } else {
+                tool = Tool.SELECT
             }
         }
     }
@@ -1099,6 +1174,13 @@ class Editor {
         if (abs(sy) < 0.02f) sy = 0.02f
         val m = Matrix().apply { setScale(sx, sy, anchor.x, anchor.y) }
         for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
+        val hd = handle
+        val rx = sx
+        val ry = sy
+        noteTransform { b ->
+            val an = corner(b, (hd + 2) % 4)
+            Matrix().apply { setScale(rx, ry, an.x, an.y) }
+        }
         touch()
     }
 
@@ -1199,6 +1281,7 @@ class Editor {
         items = items + item
         selection = setOf(item.id)
         pen = emptyList()
+        tool = Tool.SELECT
         tool = Tool.SELECT
         touch()
     }
@@ -1436,16 +1519,34 @@ class Editor {
     fun duplicateSelected() {
         val sel = selectedItems()
         if (sel.isEmpty()) return
+        val again = if (selection == dupIds) dupMake else null
         change {
             val groupMap = HashMap<Long, Long>()
             val copies = sel.map { s ->
                 s.copyWithId(nextId++).also { c ->
-                    c.offset(24f, 24f)
                     if (s.groupId != 0L) c.groupId = groupMap.getOrPut(s.groupId) { nextGroup++ }
                 }
             }
             items = items + copies
             selection = copies.map { it.id }.toSet()
+            val box = selectionBox()
+            if (again != null && box != null) {
+                // repeat whatever was last done to the previous duplicate (move, resize or rotate)
+                val m = again(box)
+                for (c in copies) c.applyFrom(c.copy(), m)
+            } else {
+                for (c in copies) c.offset(24f, 24f)
+            }
+            dupIds = selection
+            dupMake = again
         }
+    }
+
+    // ---------- duplicate repeats the last change made to the previous duplicate ----------
+    private var dupIds: Set<Long> = emptySet()
+    private var dupMake: ((RectF) -> Matrix)? = null
+
+    private fun noteTransform(make: (RectF) -> Matrix) {
+        if (selection.isNotEmpty() && selection == dupIds) dupMake = make
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -18,7 +19,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch, Theme }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -163,6 +164,10 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 cubicTo(.2f * w, .2f * w, .45f * w, .2f * w, .5f * w, .5f * w)
                 cubicTo(.55f * w, .8f * w, .78f * w, .8f * w, .88f * w, .3f * w)
             }, tint, style = st)
+            G.Theme -> {
+                drawCircle(tint, radius = w * 0.34f, center = pt(.5f, .5f), style = st)
+                drawPath(Path().apply { arcTo(Rect(.16f * w, .16f * w, .84f * w, .84f * w), -90f, 180f, true); close() }, tint)
+            }
             G.Arrange -> {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))
                 drawRect(tint, pt(.14f, .41f), sz(.44f, .18f))

@@ -20,7 +20,15 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /** The whole document: shapes plus artboard size and background (null = transparent). */
-class Doc(val items: List<Item>, val w: Float, val h: Float, val background: Int?)
+class Doc(
+    val items: List<Item>,
+    val w: Float,
+    val h: Float,
+    val background: Int?,
+    /** All artboards (project files only; exports use w, h and background of one board). */
+    val boards: List<Board> = emptyList(),
+    val active: Int = 0,
+)
 
 /** Writes the artboard to SVG, PNG, PDF, PSD, EPS, and saves/loads project files. */
 object Export {
@@ -289,8 +297,17 @@ object Export {
             it.text?.let { t -> o.put("text", textJson(t)) }
             arr.put(o)
         }
+        val boards = JSONArray()
+        for (b in doc.boards) {
+            boards.put(
+                JSONObject().put("name", b.name)
+                    .put("rect", JSONArray().put(b.rect.left.toDouble()).put(b.rect.top.toDouble()).put(b.rect.right.toDouble()).put(b.rect.bottom.toDouble()))
+                    .put("bg", b.bg ?: JSONObject.NULL),
+            )
+        }
         return JSONObject().put("app", "Logoxels").put("version", 1).put("items", arr)
             .put("width", doc.w.toDouble()).put("height", doc.h.toDouble()).put("background", doc.background ?: JSONObject.NULL)
+            .put("boards", boards).put("active", doc.active)
             .toString()
     }
 
@@ -329,9 +346,24 @@ object Export {
             }
             out.add(item)
         }
+        val boards = ArrayList<Board>()
+        root.optJSONArray("boards")?.let { ba ->
+            for (i in 0 until ba.length()) {
+                val o = ba.getJSONObject(i)
+                val r = o.getJSONArray("rect")
+                boards.add(
+                    Board(
+                        o.getString("name"),
+                        RectF(r.getDouble(0).toFloat(), r.getDouble(1).toFloat(), r.getDouble(2).toFloat(), r.getDouble(3).toFloat()),
+                        if (o.isNull("bg")) null else o.getInt("bg"),
+                    ),
+                )
+            }
+        }
         return Doc(
             out, root.optDouble("width", 1000.0).toFloat(), root.optDouble("height", 1000.0).toFloat(),
             if (root.isNull("background")) null else root.optInt("background"),
+            boards, root.optInt("active", 0),
         )
     }
 }

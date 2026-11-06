@@ -17,6 +17,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.14.3
+      - name: Fetch interface font (open licence, Century Gothic style)
+        run: |
+          mkdir -p app/src/main/assets/fonts
+          base=https://raw.githubusercontent.com/google/fonts/main/ofl/didactgothic
+          curl -fsSL "$base/DidactGothic-Regular.ttf" -o app/src/main/assets/fonts/ui.ttf
+          curl -fsSL "$base/OFL.txt" -o app/src/main/assets/fonts/OFL.txt
+          ls -l app/src/main/assets/fonts
       - run: gradle testDebugUnitTest assembleDebug --no-daemon -PbuildNumber=${{ github.run_number }}
       - name: Publish APK
         env:

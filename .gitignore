@@ -6,3 +6,4 @@ local.properties
 *.jks
 *.keystore
 !app/logoxels.keystore
+app/src/main/assets/fonts/
