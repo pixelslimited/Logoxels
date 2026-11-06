@@ -14,14 +14,18 @@ import androidx.compose.ui.geometry.Offset
 import ng.pixelslimited.logoxels.engine.geom.Rounder
 import java.util.Collections
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS }
+enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
-enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK }
+enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE }
+
+/** A pen-tool point with its two Bezier handles (equal to [p] when the point is a sharp corner). */
+class Anchor(val p: Offset, val hin: Offset, val hout: Offset)
 
 private const val DARK = 0xFF111827.toInt()
 
@@ -44,6 +48,14 @@ class Editor {
     var cornerSel by mutableStateOf<Int?>(null)
         private set
 
+    /** Points of the path being drawn with the pen tool. */
+    var pen by mutableStateOf(emptyList<Anchor>())
+        private set
+
+    /** Cut line being dragged with the knife tool, in artboard units. */
+    var knife by mutableStateOf<Pair<Offset, Offset>?>(null)
+        private set
+
     var scale by mutableFloatStateOf(1f)
         private set
     var tx by mutableFloatStateOf(0f)
@@ -53,6 +65,8 @@ class Editor {
 
     private var fitted = false
     private var nextId = 1L
+    private var nextGroup = 1L
+    private var penClosing = false
     private val undoStack = ArrayDeque<List<Item>>()
     private val redoStack = ArrayDeque<List<Item>>()
 
@@ -132,7 +146,7 @@ class Editor {
     }
 
     fun selectAll() {
-        selection = items.map { it.id }.toSet()
+        selection = items.filter { it.visible && !it.locked }.map { it.id }.toSet()
         touch()
     }
 
@@ -161,6 +175,7 @@ class Editor {
         val y = d.y.roundToInt()
         for (i in items.indices.reversed()) {
             val item = items[i]
+            if (!item.visible || item.locked) continue
             val rp = item.renderPath()
             if (item.fill != null && regionHas(rp, x, y)) return item
             val w = when {
@@ -184,6 +199,7 @@ class Editor {
     private var origBox = RectF()
     private var downHitId: Long? = null
     private var downScreen = Offset.Zero
+    private var downGroup: Set<Long> = emptySet()
     private var pickRadius = 0f
     private var wasSelected = false
 
@@ -204,6 +220,15 @@ class Editor {
         pushed = false
         downHitId = null
         if (tool == Tool.CORNERS) return Mode.PICK
+        if (tool == Tool.PEN) {
+            penClosing = pen.size >= 3 && (toScreen(pen[0].p.x, pen[0].p.y) - screen).getDistance() <= handleRadius
+            if (!penClosing) pen = pen + Anchor(downDoc, downDoc, downDoc)
+            return Mode.PEN
+        }
+        if (tool == Tool.KNIFE) {
+            knife = downDoc to downDoc
+            return Mode.KNIFE
+        }
         if (tool != Tool.SELECT) return Mode.CREATE
         val box = selectionBox()
         if (box != null) {
@@ -220,8 +245,9 @@ class Editor {
         val hit = hitTest(downDoc) ?: return Mode.NONE
         downHitId = hit.id
         wasSelected = hit.id in selection
+        downGroup = groupIds(hit)
         if (!wasSelected) {
-            selection = if (multi) selection + hit.id else setOf(hit.id)
+            selection = if (multi) selection + downGroup else downGroup
             cornerSel = null
         }
         touch()
@@ -244,6 +270,11 @@ class Editor {
                 tx += screen.x - lastScreen.x
                 ty += screen.y - lastScreen.y
             }
+            Mode.PEN -> if (!penClosing && pen.isNotEmpty()) {
+                val a = pen.last()
+                pen = pen.dropLast(1) + Anchor(a.p, Offset(2f * a.p.x - doc.x, 2f * a.p.y - doc.y), doc)
+            }
+            Mode.KNIFE -> knife = downDoc to doc
             Mode.TRANSFORM -> Unit
         }
         lastDoc = doc
@@ -255,10 +286,16 @@ class Editor {
             Mode.CREATE -> finishCreate(moved)
             Mode.MOVE -> {
                 val id = downHitId
-                if (!moved && multi && wasSelected && id != null) { selection = selection - id; touch() }
+                if (!moved && multi && wasSelected && id != null) { selection = selection - downGroup; touch() }
             }
             Mode.NONE -> if (!moved && !multi && selection.isNotEmpty()) { selection = emptySet(); touch() }
             Mode.PICK -> if (!moved) pickCorner()
+            Mode.PEN -> if (penClosing && !moved) penFinish(true)
+            Mode.KNIFE -> {
+                val k = knife
+                knife = null
+                if (k != null && moved) cut(k.first, k.second)
+            }
             else -> Unit
         }
         creating = null
@@ -434,6 +471,167 @@ class Editor {
         selectedItems().forEach { if (it.kind == Kind.STAR) { it.inner = v; it.rebuild() } }
     }
 
+    // ---------- pen ----------
+    fun penFinish(closed: Boolean) {
+        val a = pen
+        if (a.size < 2) {
+            pen = emptyList()
+            return
+        }
+        val cl = closed && a.size >= 3
+        val path = Path()
+        path.moveTo(a[0].p.x, a[0].p.y)
+        fun link(from: Anchor, to: Anchor) {
+            if (from.hout == from.p && to.hin == to.p) path.lineTo(to.p.x, to.p.y)
+            else path.cubicTo(from.hout.x, from.hout.y, to.hin.x, to.hin.y, to.p.x, to.p.y)
+        }
+        for (i in 1 until a.size) link(a[i - 1], a[i])
+        if (cl) {
+            link(a.last(), a[0])
+            path.close()
+        }
+        val item = Item(nextId++, Kind.PATH, path, RectF(), if (cl) nextFill else null, if (cl) null else DARK, if (cl) 0f else 10f)
+        pushUndo()
+        items = items + item
+        selection = setOf(item.id)
+        pen = emptyList()
+        tool = Tool.SELECT
+        touch()
+    }
+
+    fun penUndoPoint() { pen = pen.dropLast(1) }
+
+    fun penCancel() { pen = emptyList() }
+
+    // ---------- knife ----------
+    private fun cutPiece(src: Item, p: Path) =
+        Item(nextId++, Kind.PATH, p, RectF(), src.fill, src.stroke, src.strokeWidth).also { it.groupId = src.groupId }
+
+    /** Slices every shape crossed by the segment a-b along the (extended) line through it. */
+    private fun cut(a: Offset, b: Offset) {
+        val len = hypot(b.x - a.x, b.y - a.y)
+        if (len < 6f / scale) return
+        val dx = (b.x - a.x) / len
+        val dy = (b.y - a.y) / len
+        val nx = -dy
+        val ny = dx
+        val big = 6000f
+        fun half(sign: Float) = Path().apply {
+            moveTo(a.x - dx * big, a.y - dy * big)
+            lineTo(a.x + dx * big, a.y + dy * big)
+            lineTo(a.x + dx * big + nx * big * sign, a.y + dy * big + ny * big * sign)
+            lineTo(a.x - dx * big + nx * big * sign, a.y - dy * big + ny * big * sign)
+            close()
+        }
+        val left = half(1f)
+        val right = half(-1f)
+        val strip = stroked(Path().apply { moveTo(a.x, a.y); lineTo(b.x, b.y) }, 2f)
+        val pool = if (selection.isNotEmpty()) selectedItems() else items
+        val replaced = HashMap<Long, List<Item>>()
+        for (item in pool) {
+            if (!item.visible || item.locked || item.fill == null) continue
+            val shape = item.renderPath()
+            val crossed = Path(shape)
+            if (!crossed.op(strip, Path.Op.INTERSECT) || crossed.isEmpty) continue
+            val l = Path(shape)
+            val r = Path(shape)
+            if (!l.op(left, Path.Op.INTERSECT) || !r.op(right, Path.Op.INTERSECT) || l.isEmpty || r.isEmpty) continue
+            replaced[item.id] = listOf(cutPiece(item, l), cutPiece(item, r))
+        }
+        if (replaced.isEmpty()) return
+        change {
+            val out = ArrayList<Item>()
+            for (item in items) {
+                val pieces = replaced[item.id]
+                if (pieces == null) out.add(item) else out.addAll(pieces)
+            }
+            items = out
+            selection = replaced.values.flatten().map { it.id }.toSet()
+            cornerSel = null
+        }
+    }
+
+    // ---------- groups, clipping, layers ----------
+    private fun groupIds(item: Item): Set<Long> =
+        if (item.groupId == 0L) setOf(item.id) else items.filter { it.groupId == item.groupId }.map { it.id }.toSet()
+
+    fun group() {
+        val sel = selectedItems()
+        if (sel.size < 2) return
+        change {
+            val g = nextGroup++
+            sel.forEach { it.groupId = g }
+            val top = items.indexOfLast { it.id in selection }
+            val at = items.subList(0, top + 1).count { it.id !in selection }
+            val rest = items.filter { it.id !in selection }.toMutableList()
+            rest.addAll(at, sel)
+            items = rest
+        }
+    }
+
+    fun ungroup() {
+        val sel = selectedItems()
+        if (sel.none { it.groupId != 0L }) return
+        change { sel.forEach { it.groupId = 0L } }
+    }
+
+    /** The top-most selected shape trims the others to its outline and is removed. */
+    fun clipToTop() {
+        val sel = selectedItems()
+        if (sel.size < 2) return
+        val mask = sel.last()
+        val targets = sel.dropLast(1).filter { it.fill != null }
+        if (targets.isEmpty()) return
+        val maskPath = mask.renderPath()
+        change {
+            val dead = HashSet<Long>()
+            dead.add(mask.id)
+            for (t in targets) {
+                val r = Path(t.renderPath())
+                if (!r.op(maskPath, Path.Op.INTERSECT) || r.isEmpty) {
+                    dead.add(t.id)
+                    continue
+                }
+                t.kind = Kind.PATH
+                t.path = r
+                t.corner = 0f
+                t.clearCornerOverrides()
+            }
+            items = items.filter { it.id !in dead }
+            selection = targets.map { it.id }.filter { it !in dead }.toSet()
+            cornerSel = null
+        }
+    }
+
+    fun selectFromLayers(item: Item) {
+        if (item.locked || !item.visible) return
+        val ids = groupIds(item)
+        selection = if (multi) { if (item.id in selection) selection - ids else selection + ids } else ids
+        cornerSel = null
+        touch()
+    }
+
+    fun toggleVisible(item: Item) = change {
+        item.visible = !item.visible
+        if (!item.visible) selection = selection - item.id
+    }
+
+    fun toggleLock(item: Item) = change {
+        item.locked = !item.locked
+        if (item.locked) selection = selection - item.id
+    }
+
+    fun moveLayer(item: Item, up: Boolean) {
+        val i = items.indexOfFirst { it.id == item.id }
+        val j = if (up) i + 1 else i - 1
+        if (i < 0 || j !in items.indices) return
+        change {
+            val l = items.toMutableList()
+            Collections.swap(l, i, j)
+            items = l
+        }
+    }
+
     // ---------- pathfinder ----------
     fun combine(op: PfOp) {
         val sel = selectedItems()
@@ -531,7 +729,13 @@ class Editor {
         val sel = selectedItems()
         if (sel.isEmpty()) return
         change {
-            val copies = sel.map { it.copyWithId(nextId++).also { c -> c.offset(24f, 24f) } }
+            val groupMap = HashMap<Long, Long>()
+            val copies = sel.map { s ->
+                s.copyWithId(nextId++).also { c ->
+                    c.offset(24f, 24f)
+                    if (s.groupId != 0L) c.groupId = groupMap.getOrPut(s.groupId) { nextGroup++ }
+                }
+            }
             items = items + copies
             selection = copies.map { it.id }.toSet()
         }

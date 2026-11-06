@@ -18,7 +18,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -84,6 +84,19 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
             G.Style -> {
                 drawCircle(tint, radius = w * 0.26f, center = pt(.4f, .4f))
                 drawCircle(tint, radius = w * 0.26f, center = pt(.62f, .62f), style = st)
+            }
+            G.Pen -> drawPath(Path().apply {
+                moveTo(.18f * w, .86f * w); lineTo(.3f * w, .56f * w); lineTo(.7f * w, .16f * w)
+                lineTo(.86f * w, .32f * w); lineTo(.46f * w, .72f * w); close()
+            }, tint, style = st)
+            G.Knife -> drawPath(Path().apply {
+                moveTo(.15f * w, .85f * w); lineTo(.85f * w, .15f * w); lineTo(.85f * w, .45f * w)
+                lineTo(.45f * w, .85f * w); close()
+            }, tint, style = st)
+            G.Layers -> {
+                drawRect(tint, pt(.2f, .6f), sz(.6f, .22f), style = st)
+                drawRect(tint, pt(.2f, .4f), sz(.6f, .22f), style = st)
+                drawRect(tint, pt(.2f, .2f), sz(.6f, .22f), style = st)
             }
             G.Corner -> drawPath(Path().apply {
                 moveTo(.2f * w, .85f * w); lineTo(.2f * w, .5f * w)

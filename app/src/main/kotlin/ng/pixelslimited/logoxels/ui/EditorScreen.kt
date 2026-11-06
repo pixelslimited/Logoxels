@@ -33,6 +33,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -47,6 +48,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Path as CPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -66,7 +68,7 @@ import ng.pixelslimited.logoxels.engine.Tool
 import kotlin.math.roundToInt
 import android.graphics.Paint as APaint
 
-internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE }
+internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS }
 
 private val Ink = Color(0xFF111827)
 private val Muted = Color(0xFF9CA3AF)
@@ -82,13 +84,15 @@ fun EditorScreen(ed: Editor) {
     Column(Modifier.fillMaxSize().background(Color(0xFFECEFF1)).safeDrawingPadding()) {
         TopBar(ed)
         Box(Modifier.weight(1f).fillMaxWidth()) { EditorCanvas(ed) }
-        if (ed.tool == Tool.CORNERS) {
-            CornersPanel(ed)
-        } else {
-            when (panel) {
+        when (ed.tool) {
+            Tool.CORNERS -> CornersPanel(ed)
+            Tool.PEN -> PenPanel(ed)
+            Tool.KNIFE -> KnifePanel()
+            else -> when (panel) {
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
                 Panel.ARRANGE -> ArrangePanel(ed)
+                Panel.LAYERS -> LayersPanel(ed)
                 Panel.NONE -> Unit
             }
         }
@@ -148,6 +152,7 @@ private fun EditorCanvas(ed: Editor) {
             nc.scale(s, s)
             nc.drawRect(ed.artboard, artPaint)
             for (item in ed.items) {
+                if (!item.visible) continue
                 val rp = item.renderPath()
                 item.fill?.let { fillPaint.color = it; nc.drawPath(rp, fillPaint) }
                 item.stroke?.let {
@@ -183,6 +188,39 @@ private fun EditorCanvas(ed: Editor) {
                 drawCircle(if (on) orange else Accent, 13f, c, style = Stroke(width = 4f))
                 if (on) drawCircle(orange, 7f, c)
             }
+        }
+        val pen = ed.pen
+        if (pen.isNotEmpty()) {
+            fun sp(o: Offset) = ed.toScreen(o.x, o.y)
+            val route = CPath()
+            val s0 = sp(pen[0].p)
+            route.moveTo(s0.x, s0.y)
+            for (i in 1 until pen.size) {
+                val c1 = sp(pen[i - 1].hout)
+                val c2 = sp(pen[i].hin)
+                val e = sp(pen[i].p)
+                route.cubicTo(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
+            }
+            drawPath(route, Accent, style = Stroke(width = 3f))
+            pen.forEachIndexed { i, a ->
+                val c = sp(a.p)
+                if (a.hout != a.p) {
+                    val h1 = sp(a.hout)
+                    val h2 = sp(a.hin)
+                    drawLine(Accent, c, h1, 2f)
+                    drawLine(Accent, c, h2, 2f)
+                    drawCircle(Accent, 6f, h1)
+                    drawCircle(Accent, 6f, h2)
+                }
+                val o = Offset(c.x - 9f, c.y - 9f)
+                drawRect(if (i == 0) Color(0xFF16A34A) else Color.White, o, Size(18f, 18f))
+                drawRect(Accent, o, Size(18f, 18f), style = Stroke(width = 3f))
+            }
+        }
+        ed.knife?.let { (a, b) ->
+            val sa = ed.toScreen(a.x, a.y)
+            val sb = ed.toScreen(b.x, b.y)
+            drawLine(Color(0xFFEA580C), sa, sb, 4f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 10f)))
         }
     }
 }
@@ -222,11 +260,14 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Polygon, "Polygon", ed.tool == Tool.POLYGON) { ed.tool = Tool.POLYGON }
         ToolBtn(G.Star, "Star", ed.tool == Tool.STAR) { ed.tool = Tool.STAR }
         ToolBtn(G.Line, "Line", ed.tool == Tool.LINE) { ed.tool = Tool.LINE }
+        ToolBtn(G.Pen, "Pen", ed.tool == Tool.PEN) { ed.tool = Tool.PEN }
+        ToolBtn(G.Knife, "Knife", ed.tool == Tool.KNIFE) { ed.tool = Tool.KNIFE }
         ToolBtn(G.Corner, "Corners", ed.tool == Tool.CORNERS) { ed.tool = Tool.CORNERS }
         VerticalDivider(Modifier.height(36.dp).padding(horizontal = 4.dp))
         ToolBtn(G.Style, "Style", panel == Panel.STYLE) { onPanel(Panel.STYLE) }
         ToolBtn(G.Union, "Combine", panel == Panel.COMBINE) { onPanel(Panel.COMBINE) }
         ToolBtn(G.Arrange, "Arrange", panel == Panel.ARRANGE) { onPanel(Panel.ARRANGE) }
+        ToolBtn(G.Layers, "Layers", panel == Panel.LAYERS) { onPanel(Panel.LAYERS) }
     }
 }
 
@@ -330,6 +371,74 @@ private fun StylePanel(ed: Editor) {
 }
 
 @Composable
+private fun PenPanel(ed: Editor) {
+    ed.version
+    val n = ed.pen.size
+    PanelBox {
+        Label("Tap to add corner points. Drag to pull out a curve. Tap the green first point to close.")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Finish open", n >= 2) { ed.penFinish(false) }
+            Act("Close shape", n >= 3) { ed.penFinish(true) }
+            Act("Undo point", n >= 1) { ed.penUndoPoint() }
+            Act("Cancel", n >= 1) { ed.penCancel() }
+        }
+    }
+}
+
+@Composable
+private fun KnifePanel() {
+    PanelBox {
+        Label("Drag a line across shapes to cut them along it. With a selection, only the selected shapes are cut.")
+    }
+}
+
+@Composable
+private fun SmallBtn(label: String, onClick: () -> Unit) {
+    TextButton(onClick, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(label, fontSize = 12.sp) }
+}
+
+@Composable
+private fun LayersPanel(ed: Editor) {
+    ed.version
+    PanelBox {
+        if (ed.items.isEmpty()) {
+            Label("No shapes yet.")
+            return@PanelBox
+        }
+        for (item in ed.items.asReversed()) {
+            val on = item.id in ed.selection
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (on) Color(0xFFCCFBF1) else Color.Transparent)
+                    .clickable { ed.selectFromLayers(item) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(20.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(item.fill ?: item.stroke ?: 0xFF9CA3AF.toInt()))
+                        .border(1.dp, Color(0xFFD1D5DB), RoundedCornerShape(4.dp)),
+                )
+                val tag = if (item.groupId != 0L) " - group ${item.groupId}" else ""
+                Text(
+                    item.label() + tag,
+                    fontSize = 12.sp,
+                    color = if (item.visible) Ink else Muted,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                )
+                SmallBtn("Up") { ed.moveLayer(item, true) }
+                SmallBtn("Down") { ed.moveLayer(item, false) }
+                SmallBtn(if (item.visible) "Hide" else "Show") { ed.toggleVisible(item) }
+                SmallBtn(if (item.locked) "Unlock" else "Lock") { ed.toggleLock(item) }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CornersPanel(ed: Editor) {
     ed.version
     val item = ed.selectedItems().singleOrNull()
@@ -409,6 +518,12 @@ private fun ArrangePanel(ed: Editor) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Horizontally", n >= 3) { ed.distribute(true) }
             Act("Vertically", n >= 3) { ed.distribute(false) }
+        }
+        Label("Group and clip")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Group", n >= 2) { ed.group() }
+            Act("Ungroup", ed.selectedItems().any { it.groupId != 0L }) { ed.ungroup() }
+            Act("Clip to top shape", n >= 2) { ed.clipToTop() }
         }
         Label("Order and edit")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

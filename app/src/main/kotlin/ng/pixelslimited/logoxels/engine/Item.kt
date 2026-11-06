@@ -43,6 +43,11 @@ class Item(
     /** Individual corner radii, keyed by corner number (see [Rounder.nodes]). */
     val cornerR = HashMap<Int, Float>()
 
+    /** 0 = not grouped; items sharing a non-zero id move and select together. */
+    var groupId = 0L
+    var visible = true
+    var locked = false
+
     val parametric: Boolean get() = kind != Kind.PATH
 
     fun radiusAt(i: Int): Float = cornerR[i] ?: corner
@@ -59,9 +64,22 @@ class Item(
 
     fun copyWithId(newId: Long) =
         Item(newId, kind, Path(path), RectF(bounds), fill, stroke, strokeWidth, corner, sides, inner)
-            .also { it.cornerR.putAll(cornerR) }
+            .also {
+                it.cornerR.putAll(cornerR)
+                it.groupId = groupId
+                it.visible = visible
+                it.locked = locked
+            }
 
     fun copy() = copyWithId(id)
+
+    fun label(): String = when (kind) {
+        Kind.RECT -> "Rectangle"
+        Kind.ELLIPSE -> "Oval"
+        Kind.POLYGON -> "Polygon"
+        Kind.STAR -> "Star"
+        Kind.PATH -> "Path"
+    } + " " + id
 
     fun box(): RectF = RectF().also { path.computeBounds(it, true) }
 
