@@ -951,7 +951,8 @@ private fun LayersPanel(ed: Editor) {
             Label("No shapes yet.")
             return@PanelBox
         }
-        for (item in ed.items.asReversed()) {
+        for (unit in ed.layerUnits().asReversed()) {
+            val item = unit.last()
             val on = item.id in ed.selection
             Row(
                 Modifier
@@ -968,9 +969,8 @@ private fun LayersPanel(ed: Editor) {
                         .background(Color(item.fill ?: item.stroke ?: 0xFF9CA3AF.toInt()))
                         .border(1.dp, Line, RoundedCornerShape(4.dp)),
                 )
-                val tag = if (item.groupId != 0L) " - group ${item.groupId}" else ""
                 Text(
-                    item.label() + tag,
+                    if (unit.size > 1) "Group of ${unit.size} shapes" else item.label(),
                     fontSize = 12.sp,
                     color = if (item.visible) Ink else Muted,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),

@@ -1421,24 +1421,47 @@ class Editor {
         touch()
     }
 
+    /**
+     * The document as layers: a group is one entry holding all its shapes, a loose shape is an entry of one.
+     * Bottom to top. Layer order, alignment and hide/lock all work on these entries.
+     */
+    fun layerUnits(): List<List<Item>> {
+        val out = ArrayList<MutableList<Item>>()
+        val byGroup = HashMap<Long, MutableList<Item>>()
+        for (it in items) {
+            if (it.groupId == 0L) out.add(mutableListOf(it))
+            else byGroup.getOrPut(it.groupId) { mutableListOf<Item>().also { l -> out.add(l) } }.add(it)
+        }
+        return out
+    }
+
+    private fun boxOf(u: List<Item>) = RectF(u[0].box()).also { r -> for (i in u) r.union(i.box()) }
+
+    private fun selectedUnits() = layerUnits().filter { u -> u.any { it.id in selection } }
+
     fun toggleVisible(item: Item) = change {
-        item.visible = !item.visible
-        if (!item.visible) selection = selection - item.id
+        val ids = groupIds(item)
+        val v = !item.visible
+        items.filter { it.id in ids }.forEach { it.visible = v }
+        if (!v) selection = selection - ids
     }
 
     fun toggleLock(item: Item) = change {
-        item.locked = !item.locked
-        if (item.locked) selection = selection - item.id
+        val ids = groupIds(item)
+        val l = !item.locked
+        items.filter { it.id in ids }.forEach { it.locked = l }
+        if (l) selection = selection - ids
     }
 
+    /** Moves a shape, or a whole group, one step up or down in the layer order. */
     fun moveLayer(item: Item, up: Boolean) {
-        val i = items.indexOfFirst { it.id == item.id }
+        val u = layerUnits().toMutableList()
+        val i = u.indexOfFirst { l -> l.any { it.id == item.id } }
         val j = if (up) i + 1 else i - 1
-        if (i < 0 || j !in items.indices) return
+        if (i < 0 || j !in u.indices) return
         change {
-            val l = items.toMutableList()
-            Collections.swap(l, i, j)
-            items = l
+            Collections.swap(u, i, j)
+            items = u.flatten()
         }
     }
 
@@ -1468,40 +1491,42 @@ class Editor {
 
     // ---------- align / distribute ----------
     fun align(a: AlignTo) {
-        val sel = selectedItems()
-        if (sel.isEmpty()) return
-        val ref = if (sel.size == 1) RectF(artboard) else selectionBox() ?: return
+        val us = selectedUnits()
+        if (us.isEmpty()) return
+        // a group counts as one object: one group aligns to the artboard, several objects align to each other
+        val ref = if (us.size == 1) RectF(artboard) else selectionBox() ?: return
         change {
-            sel.forEach {
-                val b = it.box()
-                when (a) {
-                    AlignTo.LEFT -> it.offset(ref.left - b.left, 0f)
-                    AlignTo.CENTER -> it.offset(ref.centerX() - b.centerX(), 0f)
-                    AlignTo.RIGHT -> it.offset(ref.right - b.right, 0f)
-                    AlignTo.TOP -> it.offset(0f, ref.top - b.top)
-                    AlignTo.MIDDLE -> it.offset(0f, ref.centerY() - b.centerY())
-                    AlignTo.BOTTOM -> it.offset(0f, ref.bottom - b.bottom)
+            us.forEach { u ->
+                val b = boxOf(u)
+                val (dx, dy) = when (a) {
+                    AlignTo.LEFT -> ref.left - b.left to 0f
+                    AlignTo.CENTER -> ref.centerX() - b.centerX() to 0f
+                    AlignTo.RIGHT -> ref.right - b.right to 0f
+                    AlignTo.TOP -> 0f to ref.top - b.top
+                    AlignTo.MIDDLE -> 0f to ref.centerY() - b.centerY()
+                    AlignTo.BOTTOM -> 0f to ref.bottom - b.bottom
                 }
+                u.forEach { it.offset(dx, dy) }
             }
         }
     }
 
     fun distribute(horizontal: Boolean) {
-        val sel = selectedItems()
-        if (sel.size < 3) return
-        val sorted = sel.sortedBy { if (horizontal) it.box().left else it.box().top }
-        val first = sorted.first().box()
-        val last = sorted.last().box()
+        val us = selectedUnits()
+        if (us.size < 3) return
+        val sorted = us.sortedBy { if (horizontal) boxOf(it).left else boxOf(it).top }
+        val first = boxOf(sorted.first())
+        val last = boxOf(sorted.last())
         var total = 0f
-        sorted.forEach { val b = it.box(); total += if (horizontal) b.width() else b.height() }
+        sorted.forEach { val b = boxOf(it); total += if (horizontal) b.width() else b.height() }
         val span = if (horizontal) last.right - first.left else last.bottom - first.top
         val gap = (span - total) / (sorted.size - 1)
         var pos = if (horizontal) first.left else first.top
         change {
-            sorted.forEach {
-                val b = it.box()
-                if (horizontal) { it.offset(pos - b.left, 0f); pos += b.width() + gap }
-                else { it.offset(0f, pos - b.top); pos += b.height() + gap }
+            sorted.forEach { u ->
+                val b = boxOf(u)
+                if (horizontal) { u.forEach { it.offset(pos - b.left, 0f) }; pos += b.width() + gap }
+                else { u.forEach { it.offset(0f, pos - b.top) }; pos += b.height() + gap }
             }
         }
     }
@@ -1509,22 +1534,23 @@ class Editor {
     // ---------- order / edit ----------
     fun reorder(front: Boolean, toEnd: Boolean) {
         if (selection.isEmpty()) return
-        val list = items.toMutableList()
+        val list = layerUnits().toMutableList()
+        fun on(u: List<Item>) = u.any { it.id in selection }
         change {
             if (toEnd) {
-                val s = list.filter { it.id in selection }
+                val s = list.filter(::on)
                 list.removeAll(s)
                 if (front) list.addAll(s) else list.addAll(0, s)
             } else if (front) {
                 for (i in list.size - 2 downTo 0) {
-                    if (list[i].id in selection && list[i + 1].id !in selection) Collections.swap(list, i, i + 1)
+                    if (on(list[i]) && !on(list[i + 1])) Collections.swap(list, i, i + 1)
                 }
             } else {
                 for (i in 1 until list.size) {
-                    if (list[i].id in selection && list[i - 1].id !in selection) Collections.swap(list, i, i - 1)
+                    if (on(list[i]) && !on(list[i - 1])) Collections.swap(list, i, i - 1)
                 }
             }
-            items = list
+            items = list.flatten()
         }
     }
 
