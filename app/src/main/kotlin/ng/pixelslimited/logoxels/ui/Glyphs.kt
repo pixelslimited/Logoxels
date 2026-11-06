@@ -18,7 +18,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -123,6 +123,27 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                     drawLine(tint, pt(f, .14f), pt(f, .86f), strokeWidth = w * 0.07f)
                     drawLine(tint, pt(.14f, f), pt(.86f, f), strokeWidth = w * 0.07f)
                 }
+            }
+            G.Text -> {
+                drawLine(tint, pt(.2f, .2f), pt(.8f, .2f), strokeWidth = w * 0.11f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.5f, .2f), pt(.5f, .84f), strokeWidth = w * 0.11f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.36f, .84f), pt(.64f, .84f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+            }
+            G.Library -> {
+                drawRect(tint, pt(.12f, .12f), sz(.3f, .3f), style = st)
+                drawCircle(tint, radius = w * 0.17f, center = pt(.7f, .27f), style = st)
+                drawPath(Path().apply {
+                    moveTo(.27f * w, .58f * w); lineTo(.42f * w, .88f * w); lineTo(.12f * w, .88f * w); close()
+                }, tint, style = st)
+                drawLine(tint, pt(.58f, .62f), pt(.88f, .62f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.58f, .8f), pt(.88f, .8f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+            }
+            G.Trace -> {
+                drawRect(tint, pt(.12f, .18f), sz(.76f, .64f), style = st)
+                drawPath(Path().apply {
+                    moveTo(.18f * w, .76f * w); lineTo(.42f * w, .44f * w); lineTo(.56f * w, .62f * w)
+                    lineTo(.66f * w, .5f * w); lineTo(.82f * w, .76f * w)
+                }, tint, style = st)
             }
             G.Arrange -> {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))

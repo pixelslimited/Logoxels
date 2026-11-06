@@ -17,6 +17,8 @@ import ng.pixelslimited.logoxels.engine.geom.P
 import ng.pixelslimited.logoxels.engine.geom.PathBridge
 import ng.pixelslimited.logoxels.engine.geom.PathHit
 import ng.pixelslimited.logoxels.engine.geom.Rounder
+import ng.pixelslimited.logoxels.engine.geom.Trace
+import ng.pixelslimited.logoxels.engine.geom.Warp
 import java.util.Collections
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -25,7 +27,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS }
+enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
 enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE }
@@ -103,6 +105,7 @@ class Editor {
     private fun snapshot() = items.map { it.copy() }
 
     private fun pushUndo() {
+        textEditing = 0L
         undoStack.addLast(snapshot())
         if (undoStack.size > 100) undoStack.removeFirst()
         redoStack.clear()
@@ -141,6 +144,8 @@ class Editor {
         nextGroup = (list.maxOfOrNull { it.groupId } ?: 0L) + 1
         undoStack.clear()
         redoStack.clear()
+        trace = null
+        traceItem = 0L
         selection = emptySet()
         cornerSel = null
         nodeSel = null
@@ -218,6 +223,11 @@ class Editor {
             val item = items[i]
             if (!item.visible || item.locked) continue
             val rp = item.renderPath()
+            if (item.kind == Kind.TEXT) {
+                val tb = item.box()
+                tb.inset(-tol, -tol)
+                if (tb.contains(d.x, d.y)) return item
+            }
             if (item.fill != null && regionHas(rp, x, y)) return item
             val w = when {
                 item.stroke != null -> max(item.strokeWidth, tol * 2f)
@@ -347,7 +357,7 @@ class Editor {
         pushed = false
         downHitId = null
         when (tool) {
-            Tool.CORNERS, Tool.SCISSORS -> return Mode.PICK
+            Tool.CORNERS, Tool.SCISSORS, Tool.TEXT -> return Mode.PICK
             Tool.NODES -> return beginNodes(screen, handleRadius)
             Tool.PEN -> {
                 penClosing = pen.size >= 3 && (toScreen(pen[0].p.x, pen[0].p.y) - screen).getDistance() <= handleRadius
@@ -475,6 +485,7 @@ class Editor {
                 when (tool) {
                     Tool.NODES -> nodeTap()
                     Tool.SCISSORS -> scissorsTap()
+                    Tool.TEXT -> textTap()
                     else -> pickCorner()
                 }
             }
@@ -556,7 +567,7 @@ class Editor {
         if (!pushed) {
             pushUndo()
             pushed = true
-            item.kind = Kind.PATH
+            item.flatten()
         }
         val q = snapPoint(doc, setOf(item.id))
         val t = P(q.x.toDouble(), q.y.toDouble())
@@ -588,7 +599,7 @@ class Editor {
             val hit = Nodes.nearest(data, P(downDoc.x.toDouble(), downDoc.y.toDouble()))
             if (hit != null && hit.dist <= pickRadius / scale) {
                 pushUndo()
-                item.kind = Kind.PATH
+                item.flatten()
                 val idx = Nodes.insert(data[hit.contour], hit.seg, hit.t)
                 writeNodes(item, data)
                 item.clearCornerOverrides()
@@ -609,7 +620,7 @@ class Editor {
         val data = Nodes.fromContours(PathBridge.toContours(item.path))
         if (s.first !in data.indices || s.second !in data[s.first].nodes.indices) return
         change {
-            item.kind = Kind.PATH
+            item.flatten()
             block(data, s.first, s.second)
             writeNodes(item, data)
             if (topology) item.clearCornerOverrides()
@@ -653,7 +664,7 @@ class Editor {
         val hit = bestHit
         if (item == null || data == null || hit == null) return
         change {
-            item.kind = Kind.PATH
+            item.flatten()
             val np = data[hit.contour]
             val idx = Nodes.insert(np, hit.seg, hit.t)
             val parts = Nodes.cut(np, idx)
@@ -663,6 +674,148 @@ class Editor {
             item.clearCornerOverrides()
             selection = setOf(item.id)
             nodeSel = null
+        }
+    }
+
+    // ---------- text ----------
+    private var textEditing = 0L
+
+    /** The one live text object in the selection; other selected shapes act as its path, container or obstacles. */
+    fun textInSelection(): Item? = selectedItems().filter { it.kind == Kind.TEXT }.singleOrNull()
+
+    private fun textTap() {
+        val hit = hitTest(downDoc)
+        if (hit != null) {
+            selection = if (multi) selection + hit.id else setOf(hit.id)
+        } else if (!multi) {
+            pushUndo()
+            val item = Item(nextId++, Kind.TEXT, Path(), RectF(), nextFill, null, 0f)
+            item.text = TextSpec("Text", downDoc.x, downDoc.y)
+            item.rebuild()
+            items = items + item
+            selection = setOf(item.id)
+        }
+        cornerSel = null
+        nodeSel = null
+        touch()
+    }
+
+    /** Edits the live text; consecutive edits to the same text share one undo step. */
+    private fun editText(block: (TextSpec) -> Unit) {
+        val item = textInSelection() ?: return
+        val spec = item.text ?: return
+        if (textEditing != item.id) {
+            pushUndo()
+            textEditing = item.id
+        }
+        block(spec)
+        item.rebuild()
+        touch()
+    }
+
+    fun setText(v: String) = editText { it.text = v }
+    fun setFont(i: Int) = editText { it.font = i }
+    fun setBold(v: Boolean) = editText { it.bold = v }
+    fun setItalic(v: Boolean) = editText { it.italic = v }
+    fun setTextSize(v: Float) = editText { it.size = v }
+    fun setWarp(w: Warp) = editText { it.warp = w }
+    fun setWarpAmount(v: Float) = editText { it.amount = v }
+    fun textPlain() = editText { it.mode = TextMode.PLAIN }
+
+    private fun textOthers() = selectedItems().filter { it.kind != Kind.TEXT }
+
+    fun textOnPath() {
+        val g = textOthers().firstOrNull() ?: return
+        editText { s ->
+            s.mode = TextMode.ON_PATH
+            s.guide = Path(g.renderPath())
+            textInSelection()?.xf?.reset()
+        }
+    }
+
+    /** Fills the first other selected shape with the text; with [flow], the remaining shapes are kept clear. */
+    fun textInArea(flow: Boolean) {
+        val others = textOthers()
+        val c = others.firstOrNull() ?: return
+        editText { s ->
+            s.mode = TextMode.AREA
+            s.area = Path(c.renderPath())
+            s.obstacles = if (flow) others.drop(1).map { Path(it.renderPath()) } else emptyList()
+            textInSelection()?.xf?.reset()
+        }
+    }
+
+    fun textOutlines() {
+        val item = textInSelection() ?: return
+        change { item.flatten() }
+    }
+
+    // ---------- shape library ----------
+    fun insertIcon(d: String) {
+        change {
+            val item = Item(nextId++, Kind.PATH, Icons.placed(d, 500f, 500f, 300f), RectF(), nextFill, null, 0f)
+            items = items + item
+            selection = setOf(item.id)
+            tool = Tool.SELECT
+        }
+    }
+
+    // ---------- image trace ----------
+    var trace by mutableStateOf<TraceSource?>(null)
+        private set
+    var traceThreshold by mutableFloatStateOf(128f)
+        private set
+    var traceInvert by mutableStateOf(false)
+        private set
+    private var traceItem = 0L
+
+    fun traceLoad(src: TraceSource) {
+        trace = src
+        traceItem = 0L
+        traceRun()
+    }
+
+    fun setTraceThreshold(v: Float) {
+        traceThreshold = v
+        traceRun()
+    }
+
+    fun setTraceInvert(v: Boolean) {
+        traceInvert = v
+        traceRun()
+        endSlide()
+    }
+
+    /** Traces the loaded picture; re-tuning updates the same shape instead of adding another. */
+    private fun traceRun() {
+        val src = trace ?: return
+        val thr = traceThreshold.toInt()
+        val inv = traceInvert
+        val loops = Trace.loops(src.w, src.h) { x, y -> (src.gray[y * src.w + x] < thr) != inv }
+        val k = 800f / max(src.w, src.h)
+        val ox = (1000f - src.w * k) / 2f
+        val oy = (1000f - src.h * k) / 2f
+        val p = Path()
+        for (loop in loops) {
+            loop.forEachIndexed { i, pt ->
+                val x = ox + pt.x.toFloat() * k
+                val y = oy + pt.y.toFloat() * k
+                if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+            }
+            p.close()
+        }
+        p.fillType = Path.FillType.EVEN_ODD
+        val existing = items.firstOrNull { it.id == traceItem }
+        if (existing != null) {
+            slide { existing.path = p }
+            selection = setOf(existing.id)
+        } else {
+            change {
+                val item = Item(nextId++, Kind.PATH, p, RectF(), DARK, null, 0f)
+                traceItem = item.id
+                items = items + item
+                selection = setOf(item.id)
+            }
         }
     }
 
@@ -1016,7 +1169,7 @@ class Editor {
                     dead.add(t.id)
                     continue
                 }
-                t.kind = Kind.PATH
+                t.flatten()
                 t.path = r
                 t.corner = 0f
                 t.clearCornerOverrides()

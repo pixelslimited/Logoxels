@@ -9,7 +9,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Kind { RECT, ELLIPSE, POLYGON, STAR, PATH }
+enum class Kind { RECT, ELLIPSE, POLYGON, STAR, PATH, TEXT }
 
 /** One vector object. Geometry lives in artboard units (1000 x 1000). */
 class Item(
@@ -53,6 +53,9 @@ class Item(
 
     val parametric: Boolean get() = kind != Kind.PATH
 
+    /** Set while [kind] is TEXT: the live text this outline is built from. */
+    var text: TextSpec? = null
+
     /** Rotation, flip and resize of a live shape: the outline is [bounds] built as a shape, then moved by this. */
     val xf = Matrix()
 
@@ -77,6 +80,7 @@ class Item(
                 it.locked = locked
                 it.gradient = gradient?.copy()
                 it.xf.set(xf)
+                it.text = text?.copy()
             }
 
     fun copy() = copyWithId(id)
@@ -87,12 +91,22 @@ class Item(
         Kind.POLYGON -> "Polygon"
         Kind.STAR -> "Star"
         Kind.PATH -> "Path"
+        Kind.TEXT -> "Text"
     } + " " + id
 
     fun box(): RectF = RectF().also { path.computeBounds(it, true) }
 
     fun rebuild() {
-        if (parametric) path = buildShape(kind, bounds, sides, inner).also { it.transform(xf) }
+        if (!parametric) return
+        val base = if (kind == Kind.TEXT) text?.let { TextLayout.build(it) } ?: Path() else buildShape(kind, bounds, sides, inner)
+        base.transform(xf)
+        path = base
+    }
+
+    /** Turns a live shape or text into a plain path: the outline stays, the editable properties go. */
+    fun flatten() {
+        kind = Kind.PATH
+        text = null
     }
 
     fun offset(dx: Float, dy: Float) {
@@ -150,7 +164,7 @@ fun buildShape(kind: Kind, r: RectF, sides: Int, inner: Float): Path {
             }
             p.close()
         }
-        Kind.PATH -> Unit
+        Kind.PATH, Kind.TEXT -> Unit
     }
     return p
 }

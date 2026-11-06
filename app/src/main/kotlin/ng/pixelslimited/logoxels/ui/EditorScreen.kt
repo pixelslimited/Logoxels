@@ -34,6 +34,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -55,6 +56,8 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Path as CPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
@@ -68,9 +71,14 @@ import ng.pixelslimited.logoxels.engine.AlignTo
 import ng.pixelslimited.logoxels.engine.Editor
 import ng.pixelslimited.logoxels.engine.Export
 import ng.pixelslimited.logoxels.engine.GKind
+import ng.pixelslimited.logoxels.engine.Icons
+import ng.pixelslimited.logoxels.engine.ImageLoad
 import ng.pixelslimited.logoxels.engine.Kind
 import ng.pixelslimited.logoxels.engine.Mode
 import ng.pixelslimited.logoxels.engine.PfOp
+import ng.pixelslimited.logoxels.engine.TextLayout
+import ng.pixelslimited.logoxels.engine.TextMode
+import ng.pixelslimited.logoxels.engine.geom.Warp
 import ng.pixelslimited.logoxels.engine.Tool
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -80,7 +88,7 @@ import java.io.OutputStream
 
 private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
 
-internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID }
+internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID, ICONS, TRACE }
 
 private val Ink = Color(0xFF111827)
 private val Muted = Color(0xFF9CA3AF)
@@ -127,6 +135,16 @@ fun EditorScreen(ed: Editor) {
     val projOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u ->
         write(u) { it.write(Export.projectJson(ed.items).toByteArray()) }
     }
+    val traceIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
+        if (u != null) {
+            val src = try {
+                ImageLoad.decode({ ctx.contentResolver.openInputStream(u) })
+            } catch (e: Exception) {
+                null
+            }
+            if (src == null) report("Could not read that image") else ed.traceLoad(src)
+        }
+    }
     val projIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         if (u != null) {
             try {
@@ -157,12 +175,15 @@ fun EditorScreen(ed: Editor) {
             Tool.KNIFE -> KnifePanel()
             Tool.NODES -> NodesPanel(ed)
             Tool.SCISSORS -> ScissorsPanel()
+            Tool.TEXT -> TextPanel(ed)
             else -> when (panel) {
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
                 Panel.ARRANGE -> ArrangePanel(ed)
                 Panel.LAYERS -> LayersPanel(ed)
                 Panel.GRID -> GridPanel(ed)
+                Panel.ICONS -> IconsPanel(ed)
+                Panel.TRACE -> TracePanel(ed) { traceIn.launch(arrayOf("image/*")) }
                 Panel.NONE -> Unit
             }
         }
@@ -453,6 +474,7 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Star, "Star", ed.tool == Tool.STAR) { ed.tool = Tool.STAR }
         ToolBtn(G.Line, "Line", ed.tool == Tool.LINE) { ed.tool = Tool.LINE }
         ToolBtn(G.Pen, "Pen", ed.tool == Tool.PEN) { ed.tool = Tool.PEN }
+        ToolBtn(G.Text, "Text", ed.tool == Tool.TEXT) { ed.tool = Tool.TEXT }
         ToolBtn(G.Knife, "Knife", ed.tool == Tool.KNIFE) { ed.tool = Tool.KNIFE }
         ToolBtn(G.Nodes, "Nodes", ed.tool == Tool.NODES) { ed.tool = Tool.NODES }
         ToolBtn(G.Scissors, "Scissors", ed.tool == Tool.SCISSORS) { ed.tool = Tool.SCISSORS }
@@ -463,6 +485,8 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Arrange, "Arrange", panel == Panel.ARRANGE) { onPanel(Panel.ARRANGE) }
         ToolBtn(G.Layers, "Layers", panel == Panel.LAYERS) { onPanel(Panel.LAYERS) }
         ToolBtn(G.Grid, "Grid", panel == Panel.GRID) { onPanel(Panel.GRID) }
+        ToolBtn(G.Library, "Shapes", panel == Panel.ICONS) { onPanel(Panel.ICONS) }
+        ToolBtn(G.Trace, "Trace", panel == Panel.TRACE) { onPanel(Panel.TRACE) }
     }
 }
 
@@ -598,6 +622,85 @@ private fun PenPanel(ed: Editor) {
 private fun KnifePanel() {
     PanelBox {
         Label("Drag a line across shapes to cut them along it. With a selection, only the selected shapes are cut.")
+    }
+}
+
+@Composable
+private fun TextPanel(ed: Editor) {
+    ed.version
+    val item = ed.textInSelection()
+    val spec = item?.text
+    PanelBox {
+        if (item == null || spec == null) {
+            Label("Tap the canvas to add text, or tap existing text to edit it. To put text on a path, in a shape or around objects, turn on Multi and select the text and the shape.")
+            return@PanelBox
+        }
+        var tv by remember(item.id) { mutableStateOf(spec.text) }
+        OutlinedTextField(tv, { tv = it; ed.setText(it) }, Modifier.fillMaxWidth(), label = { Text("Text", fontSize = 12.sp) })
+        Label("Font")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextLayout.FONTS.forEachIndexed { i, f ->
+                FilterChip(spec.font == i, { ed.setFont(i) }, { Text(f.second, fontSize = 12.sp) })
+            }
+            FilterChip(spec.bold, { ed.setBold(!spec.bold) }, { Text("Bold", fontSize = 12.sp) })
+            FilterChip(spec.italic, { ed.setItalic(!spec.italic) }, { Text("Italic", fontSize = 12.sp) })
+        }
+        SliderRow("Size", spec.size, 20f..400f, 0, ed::endSlide) { ed.setTextSize(it) }
+        Label("Layout")
+        val others = ed.selectedItems().count { it.kind != Kind.TEXT }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Plain", true) { ed.textPlain() }
+            Act("On path", others >= 1) { ed.textOnPath() }
+            Act("In shape", others >= 1) { ed.textInArea(false) }
+            Act("Flow around", others >= 2) { ed.textInArea(true) }
+            Act("To outlines", true) { ed.textOutlines() }
+        }
+        if (spec.mode == TextMode.PLAIN) {
+            Label("Warp")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (w in Warp.values()) {
+                    FilterChip(spec.warp == w, { ed.setWarp(w) }, { Text(w.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 12.sp) })
+                }
+            }
+            if (spec.warp != Warp.NONE) SliderRow("Bend", spec.amount * 100f, -100f..100f, 0, ed::endSlide) { ed.setWarpAmount(it / 100f) }
+        } else {
+            Label("In shape and Flow around fill the first selected shape. Plain brings the text back to a free line.")
+        }
+    }
+}
+
+@Composable
+private fun IconsPanel(ed: Editor) {
+    val icons = remember { Icons.all.map { (name, d) -> Triple(name, d, Icons.path(d).asComposePath()) } }
+    PanelBox {
+        Label("Tap a shape to add it. Colour, round, cut and combine it like any other shape.")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((name, d, path) in icons) {
+                Column(
+                    Modifier.width(68.dp).clip(RoundedCornerShape(12.dp)).clickable { ed.insertIcon(d) }.padding(6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Canvas(Modifier.size(40.dp)) { scale(size.width / 100f, Offset.Zero) { drawPath(path, Ink) } }
+                    Text(name, fontSize = 12.sp, color = Ink)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TracePanel(ed: Editor, onPick: () -> Unit) {
+    ed.version
+    PanelBox {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Choose image", true, onPick)
+            FilterChip(ed.traceInvert, { ed.setTraceInvert(!ed.traceInvert) }, { Text("Invert", fontSize = 12.sp) })
+        }
+        if (ed.trace == null) {
+            Label("Pick a logo, sketch or photo. Its dark areas become an editable vector shape.")
+        } else {
+            SliderRow("Threshold", ed.traceThreshold, 1f..254f, 0, ed::endSlide) { ed.setTraceThreshold(it) }
+        }
     }
 }
 

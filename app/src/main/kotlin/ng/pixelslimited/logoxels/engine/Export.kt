@@ -11,6 +11,7 @@ import ng.pixelslimited.logoxels.engine.geom.P
 import ng.pixelslimited.logoxels.engine.geom.PathBridge
 import ng.pixelslimited.logoxels.engine.geom.PathData
 import ng.pixelslimited.logoxels.engine.geom.Seg
+import ng.pixelslimited.logoxels.engine.geom.Warp
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream
@@ -234,6 +235,30 @@ object Export {
         return path
     }
 
+    private fun textJson(t: TextSpec): JSONObject {
+        val o = JSONObject()
+            .put("t", t.text).put("x", t.x.toDouble()).put("y", t.y.toDouble())
+            .put("font", t.font).put("bold", t.bold).put("italic", t.italic).put("size", t.size.toDouble())
+            .put("mode", t.mode.name).put("warp", t.warp.name).put("amount", t.amount.toDouble())
+        t.guide?.let { o.put("guide", pathJson(it)) }
+        t.area?.let { o.put("area", pathJson(it)) }
+        val obs = JSONArray()
+        for (p in t.obstacles) obs.put(pathJson(p))
+        return o.put("obstacles", obs)
+    }
+
+    private fun textFrom(o: JSONObject): TextSpec {
+        val obs = o.optJSONArray("obstacles")
+        return TextSpec(
+            o.getString("t"), o.getDouble("x").toFloat(), o.getDouble("y").toFloat(),
+            o.getInt("font"), o.getBoolean("bold"), o.getBoolean("italic"), o.getDouble("size").toFloat(),
+            TextMode.valueOf(o.getString("mode")),
+            o.optJSONObject("guide")?.let { pathFrom(it) }, o.optJSONObject("area")?.let { pathFrom(it) },
+            if (obs == null) emptyList() else List(obs.length()) { pathFrom(obs.getJSONObject(it)) },
+            Warp.valueOf(o.getString("warp")), o.getDouble("amount").toFloat(),
+        )
+    }
+
     fun projectJson(items: List<Item>): String {
         val arr = JSONArray()
         for (it in items) {
@@ -251,6 +276,7 @@ object Export {
             it.gradient?.let { g ->
                 o.put("gradient", JSONObject().put("kind", g.kind.name).put("c1", g.c1).put("c2", g.c2).put("angle", g.angle.toDouble()))
             }
+            it.text?.let { t -> o.put("text", textJson(t)) }
             arr.put(o)
         }
         return JSONObject().put("app", "Logoxels").put("version", 1).put("items", arr).toString()
@@ -276,6 +302,7 @@ object Export {
             o.optJSONArray("xf")?.let { a ->
                 item.xf.setValues(FloatArray(9) { k -> a.getDouble(k).toFloat() })
             }
+            o.optJSONObject("text")?.let { item.text = textFrom(it) }
             item.groupId = o.getLong("group")
             item.visible = o.getBoolean("visible")
             item.locked = o.getBoolean("locked")
