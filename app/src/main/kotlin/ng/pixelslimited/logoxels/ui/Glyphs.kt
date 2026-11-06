@@ -18,7 +18,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -103,6 +103,27 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 cubicTo(.2f * w, .307f * w, .357f * w, .15f * w, .55f * w, .15f * w)
                 lineTo(.85f * w, .15f * w)
             }, tint, style = st)
+            G.Nodes -> {
+                drawPath(Path().apply {
+                    moveTo(.18f * w, .75f * w)
+                    cubicTo(.3f * w, .2f * w, .65f * w, .2f * w, .82f * w, .7f * w)
+                }, tint, style = st)
+                drawRect(tint, pt(.1f, .67f), sz(.16f, .16f))
+                drawRect(tint, pt(.74f, .62f), sz(.16f, .16f))
+                drawCircle(tint, radius = w * 0.08f, center = pt(.5f, .33f))
+            }
+            G.Scissors -> {
+                drawLine(tint, pt(.3f, .72f), pt(.82f, .16f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.7f, .72f), pt(.18f, .16f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+                drawCircle(tint, radius = w * 0.11f, center = pt(.27f, .8f), style = st)
+                drawCircle(tint, radius = w * 0.11f, center = pt(.73f, .8f), style = st)
+            }
+            G.Grid -> {
+                for (f in listOf(.3f, .7f)) {
+                    drawLine(tint, pt(f, .14f), pt(f, .86f), strokeWidth = w * 0.07f)
+                    drawLine(tint, pt(.14f, f), pt(.86f, f), strokeWidth = w * 0.07f)
+                }
+            }
             G.Arrange -> {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))
                 drawRect(tint, pt(.14f, .41f), sz(.44f, .18f))

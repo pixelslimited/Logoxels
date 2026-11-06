@@ -48,6 +48,9 @@ class Item(
     var visible = true
     var locked = false
 
+    /** When set, replaces the flat [fill] colour while drawing. */
+    var gradient: Gradient? = null
+
     val parametric: Boolean get() = kind != Kind.PATH
 
     fun radiusAt(i: Int): Float = cornerR[i] ?: corner
@@ -69,6 +72,7 @@ class Item(
                 it.groupId = groupId
                 it.visible = visible
                 it.locked = locked
+                it.gradient = gradient?.copy()
             }
 
     fun copy() = copyWithId(id)
@@ -105,6 +109,14 @@ class Item(
             p.transform(m)
             path = p
         }
+    }
+
+    /** Rotate/flip: always bakes the move into the outline, so the item stops being a live shape. */
+    fun applyMatrixFrom(orig: Item, m: Matrix) {
+        val p = Path(orig.path)
+        p.transform(m)
+        kind = Kind.PATH
+        path = p
     }
 
     /** Corner points of the sharp outline, for the corner-editing dots. */

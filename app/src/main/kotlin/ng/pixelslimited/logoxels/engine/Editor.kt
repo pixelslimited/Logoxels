@@ -11,23 +11,34 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import ng.pixelslimited.logoxels.engine.geom.NodePath
+import ng.pixelslimited.logoxels.engine.geom.Nodes
+import ng.pixelslimited.logoxels.engine.geom.P
+import ng.pixelslimited.logoxels.engine.geom.PathBridge
+import ng.pixelslimited.logoxels.engine.geom.PathHit
 import ng.pixelslimited.logoxels.engine.geom.Rounder
 import java.util.Collections
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE }
+enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
-enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE }
+enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE }
 
 /** A pen-tool point with its two Bezier handles (equal to [p] when the point is a sharp corner). */
 class Anchor(val p: Offset, val hin: Offset, val hout: Offset)
 
 private const val DARK = 0xFF111827.toInt()
+private const val ROT_OFFSET = 64f
+private const val GUIDE_GRAB = 16f
+
+/** A ruler guide: a vertical line at x = [pos], or a horizontal line at y = [pos]. */
+class Guide(val vertical: Boolean, val pos: Float)
 
 /** Document + interaction state. UI reads [version] to know when to redraw. */
 class Editor {
@@ -50,6 +61,22 @@ class Editor {
 
     /** Points of the path being drawn with the pen tool. */
     var pen by mutableStateOf(emptyList<Anchor>())
+        private set
+
+    /** Corner point picked with the Nodes tool: (contour, point). */
+    var nodeSel by mutableStateOf<Pair<Int, Int>?>(null)
+        private set
+
+    var showGrid by mutableStateOf(false)
+    var snapGrid by mutableStateOf(false)
+    var snapObjects by mutableStateOf(true)
+    var showRulers by mutableStateOf(true)
+    var gridSize by mutableFloatStateOf(50f)
+    var guides by mutableStateOf(emptyList<Guide>())
+        private set
+
+    /** Alignment lines flashed while dragging with snapping on. */
+    var snapHints by mutableStateOf(emptyList<Guide>())
         private set
 
     /** Cut line being dragged with the knife tool, in artboard units. */
@@ -188,6 +215,76 @@ class Editor {
         return null
     }
 
+    // ---------- snapping ----------
+    private fun targetLines(exclude: Set<Long>): Pair<List<Float>, List<Float>> {
+        val xs = ArrayList<Float>()
+        val ys = ArrayList<Float>()
+        if (snapObjects) {
+            xs.add(artboard.left); xs.add(artboard.centerX()); xs.add(artboard.right)
+            ys.add(artboard.top); ys.add(artboard.centerY()); ys.add(artboard.bottom)
+            for (o in items) {
+                if (o.id in exclude || !o.visible) continue
+                val b = o.box()
+                xs.add(b.left); xs.add(b.centerX()); xs.add(b.right)
+                ys.add(b.top); ys.add(b.centerY()); ys.add(b.bottom)
+            }
+            for (g in guides) if (g.vertical) xs.add(g.pos) else ys.add(g.pos)
+        }
+        return xs to ys
+    }
+
+    /** Smallest move that puts one of [values] on a target line (or grid line); returns (move, line position). */
+    private fun bestSnap(values: List<Float>, targets: List<Float>, tol: Float): Pair<Float, Float>? {
+        var bestD = Float.MAX_VALUE
+        var bestPos = 0f
+        var found = false
+        for (v in values) {
+            if (snapGrid) {
+                val g = (v / gridSize).roundToInt() * gridSize
+                val d = g - v
+                if (abs(d) <= tol && abs(d) < abs(bestD)) { bestD = d; bestPos = g; found = true }
+            }
+            for (t in targets) {
+                val d = t - v
+                if (abs(d) <= tol && abs(d) < abs(bestD)) { bestD = d; bestPos = t; found = true }
+            }
+        }
+        return if (found) bestD to bestPos else null
+    }
+
+    private fun hintsFor(ax: Pair<Float, Float>?, ay: Pair<Float, Float>?) {
+        val h = ArrayList<Guide>()
+        if (ax != null) h.add(Guide(true, ax.second))
+        if (ay != null) h.add(Guide(false, ay.second))
+        snapHints = h
+    }
+
+    private fun snapMove(box: RectF, dx: Float, dy: Float): Offset {
+        snapHints = emptyList()
+        if (!snapGrid && !snapObjects) return Offset.Zero
+        val tol = 10f / scale
+        val (xs, ys) = targetLines(selection)
+        val ax = bestSnap(listOf(box.left + dx, box.centerX() + dx, box.right + dx), xs, tol)
+        val ay = bestSnap(listOf(box.top + dy, box.centerY() + dy, box.bottom + dy), ys, tol)
+        hintsFor(ax, ay)
+        return Offset(ax?.first ?: 0f, ay?.first ?: 0f)
+    }
+
+    private fun snapPoint(p: Offset, exclude: Set<Long>): Offset {
+        snapHints = emptyList()
+        if (!snapGrid && !snapObjects) return p
+        val tol = 10f / scale
+        val (xs, ys) = targetLines(exclude)
+        val ax = bestSnap(listOf(p.x), xs, tol)
+        val ay = bestSnap(listOf(p.y), ys, tol)
+        hintsFor(ax, ay)
+        return Offset(p.x + (ax?.first ?: 0f), p.y + (ay?.first ?: 0f))
+    }
+
+    fun addGuide(vertical: Boolean) { guides = guides + Guide(vertical, 500f) }
+
+    fun clearGuides() { guides = emptyList() }
+
     // ---------- gestures ----------
     private var downDoc = Offset.Zero
     private var lastDoc = Offset.Zero
@@ -202,12 +299,28 @@ class Editor {
     private var downGroup: Set<Long> = emptySet()
     private var pickRadius = 0f
     private var wasSelected = false
+    private var moveStart = Offset.Zero
+    private var rotCenter = Offset.Zero
+    private var rotStart = 0f
+    private var guideIdx = -1
+    private var nodeData: MutableList<NodePath>? = null
+    private var nodeTarget: Item? = null
+    private var nodeDrag = 0
+    private var nodeCollinear = false
+    private var nodeOpp = 0.0
 
     private fun corner(b: RectF, i: Int) = when (i) {
         0 -> Offset(b.left, b.top)
         1 -> Offset(b.right, b.top)
         2 -> Offset(b.right, b.bottom)
         else -> Offset(b.left, b.bottom)
+    }
+
+    /** Screen position of the rotation handle that floats above the selection, or null. */
+    fun rotateHandle(): Offset? {
+        val b = selectionBox() ?: return null
+        val top = toScreen(b.centerX(), b.top)
+        return Offset(top.x, top.y - ROT_OFFSET)
     }
 
     fun beginGesture(screen: Offset, handleRadius: Float): Mode {
@@ -219,17 +332,27 @@ class Editor {
         creating = null
         pushed = false
         downHitId = null
-        if (tool == Tool.CORNERS) return Mode.PICK
-        if (tool == Tool.PEN) {
-            penClosing = pen.size >= 3 && (toScreen(pen[0].p.x, pen[0].p.y) - screen).getDistance() <= handleRadius
-            if (!penClosing) pen = pen + Anchor(downDoc, downDoc, downDoc)
-            return Mode.PEN
+        when (tool) {
+            Tool.CORNERS, Tool.SCISSORS -> return Mode.PICK
+            Tool.NODES -> return beginNodes(screen, handleRadius)
+            Tool.PEN -> {
+                penClosing = pen.size >= 3 && (toScreen(pen[0].p.x, pen[0].p.y) - screen).getDistance() <= handleRadius
+                if (!penClosing) {
+                    downDoc = snapPoint(downDoc, emptySet())
+                    pen = pen + Anchor(downDoc, downDoc, downDoc)
+                }
+                return Mode.PEN
+            }
+            Tool.KNIFE -> {
+                knife = downDoc to downDoc
+                return Mode.KNIFE
+            }
+            Tool.SELECT -> Unit
+            else -> {
+                downDoc = snapPoint(downDoc, emptySet())
+                return Mode.CREATE
+            }
         }
-        if (tool == Tool.KNIFE) {
-            knife = downDoc to downDoc
-            return Mode.KNIFE
-        }
-        if (tool != Tool.SELECT) return Mode.CREATE
         val box = selectionBox()
         if (box != null) {
             for (i in 0..3) {
@@ -241,6 +364,20 @@ class Editor {
                     return Mode.RESIZE
                 }
             }
+            val rh = rotateHandle()
+            if (rh != null && (rh - screen).getDistance() <= handleRadius) {
+                origSel = selectedItems().map { it.copy() }
+                rotCenter = Offset(box.centerX(), box.centerY())
+                rotStart = atan2(downDoc.y - rotCenter.y, downDoc.x - rotCenter.x)
+                return Mode.ROTATE
+            }
+        }
+        for ((gi, g) in guides.withIndex()) {
+            val dist = if (g.vertical) toScreen(g.pos, 0f).x - screen.x else toScreen(0f, g.pos).y - screen.y
+            if (abs(dist) <= GUIDE_GRAB) {
+                guideIdx = gi
+                return Mode.GUIDE
+            }
         }
         val hit = hitTest(downDoc) ?: return Mode.NONE
         downHitId = hit.id
@@ -249,6 +386,7 @@ class Editor {
         if (!wasSelected) {
             selection = if (multi) selection + downGroup else downGroup
             cornerSel = null
+            nodeSel = null
         }
         touch()
         return Mode.MOVE
@@ -257,15 +395,45 @@ class Editor {
     fun dragGesture(mode: Mode, screen: Offset) {
         val doc = toDoc(screen)
         when (mode) {
-            Mode.CREATE -> dragCreate(doc)
+            Mode.CREATE -> dragCreate(snapPoint(doc, emptySet()))
             Mode.MOVE -> {
-                if (!pushed) { pushUndo(); pushed = true }
-                val dx = doc.x - lastDoc.x
-                val dy = doc.y - lastDoc.y
-                selectedItems().forEach { it.offset(dx, dy) }
+                if (!pushed) {
+                    pushUndo()
+                    pushed = true
+                    origSel = selectedItems().map { it.copy() }
+                    origBox = selectionBox() ?: RectF()
+                    moveStart = downDoc
+                }
+                var dx = doc.x - moveStart.x
+                var dy = doc.y - moveStart.y
+                val adj = snapMove(origBox, dx, dy)
+                dx += adj.x
+                dy += adj.y
+                val m = Matrix().apply { setTranslate(dx, dy) }
+                for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
                 touch()
             }
-            Mode.RESIZE -> dragResize(doc)
+            Mode.RESIZE -> dragResize(snapPoint(doc, selection))
+            Mode.ROTATE -> {
+                if (!pushed) { pushUndo(); pushed = true }
+                var deg = Math.toDegrees((atan2(doc.y - rotCenter.y, doc.x - rotCenter.x) - rotStart).toDouble()).toFloat()
+                if (snapGrid || snapObjects) {
+                    val s = (deg / 15f).roundToInt() * 15f
+                    if (abs(s - deg) < 4f) deg = s
+                }
+                val m = Matrix().apply { setRotate(deg, rotCenter.x, rotCenter.y) }
+                for (o in origSel) items.firstOrNull { it.id == o.id }?.applyMatrixFrom(o, m)
+                touch()
+            }
+            Mode.GUIDE -> {
+                val g = guides.getOrNull(guideIdx)
+                if (g != null) {
+                    val list = guides.toMutableList()
+                    list[guideIdx] = Guide(g.vertical, if (g.vertical) doc.x else doc.y)
+                    guides = list
+                }
+            }
+            Mode.NODE -> dragNode(doc)
             Mode.NONE, Mode.PICK -> {
                 tx += screen.x - lastScreen.x
                 ty += screen.y - lastScreen.y
@@ -289,16 +457,255 @@ class Editor {
                 if (!moved && multi && wasSelected && id != null) { selection = selection - downGroup; touch() }
             }
             Mode.NONE -> if (!moved && !multi && selection.isNotEmpty()) { selection = emptySet(); touch() }
-            Mode.PICK -> if (!moved) pickCorner()
+            Mode.PICK -> if (!moved) {
+                when (tool) {
+                    Tool.NODES -> nodeTap()
+                    Tool.SCISSORS -> scissorsTap()
+                    else -> pickCorner()
+                }
+            }
             Mode.PEN -> if (penClosing && !moved) penFinish(true)
             Mode.KNIFE -> {
                 val k = knife
                 knife = null
                 if (k != null && moved) cut(k.first, k.second)
             }
+            Mode.GUIDE -> {
+                val g = guides.getOrNull(guideIdx)
+                if (g != null && (g.pos < -150f || g.pos > 1150f)) {
+                    guides = guides.filterIndexed { i, _ -> i != guideIdx }
+                    touch()
+                }
+            }
             else -> Unit
         }
         creating = null
+        nodeData = null
+        nodeTarget = null
+        snapHints = emptyList()
+    }
+
+    // ---------- node editing and scissors ----------
+    private fun near(a: P, b: P) = Nodes.same(a, b)
+
+    private fun writeNodes(item: Item, data: List<NodePath>) {
+        val ft = item.path.fillType
+        item.path = PathBridge.toPath(Nodes.toContours(data)).also { it.fillType = ft }
+    }
+
+    /** Points and handles of the single selected shape, for drawing the node overlay. */
+    fun nodePaths(): List<NodePath> =
+        selectedItems().singleOrNull()?.let { Nodes.fromContours(PathBridge.toContours(it.path)) } ?: emptyList()
+
+    private fun beginNodes(screen: Offset, r: Float): Mode {
+        val item = selectedItems().singleOrNull() ?: return Mode.PICK
+        val data = Nodes.fromContours(PathBridge.toContours(item.path))
+        val sel = nodeSel
+        if (sel != null && sel.first in data.indices && sel.second in data[sel.first].nodes.indices) {
+            val nd = data[sel.first].nodes[sel.second]
+            for (which in 2..3) {
+                val h = if (which == 2) nd.hin else nd.hout
+                if (!near(h, nd.p) && (toScreen(h.x.toFloat(), h.y.toFloat()) - screen).getDistance() <= r) {
+                    return startNodeDrag(item, data, sel, which)
+                }
+            }
+        }
+        for ((ci, np) in data.withIndex()) {
+            for ((ni, nd) in np.nodes.withIndex()) {
+                if ((toScreen(nd.p.x.toFloat(), nd.p.y.toFloat()) - screen).getDistance() <= r) {
+                    val picked = ci to ni
+                    nodeSel = picked
+                    touch()
+                    return startNodeDrag(item, data, picked, 1)
+                }
+            }
+        }
+        return Mode.PICK
+    }
+
+    private fun startNodeDrag(item: Item, data: MutableList<NodePath>, sel: Pair<Int, Int>, which: Int): Mode {
+        nodeData = data
+        nodeTarget = item
+        nodeDrag = which
+        val nd = data[sel.first].nodes[sel.second]
+        nodeCollinear = !near(nd.hin, nd.p) && !near(nd.hout, nd.p) &&
+            abs(((nd.hin - nd.p).unit() dot (nd.hout - nd.p).unit()) + 1.0) < 0.02
+        nodeOpp = if (which == 2) (nd.hout - nd.p).len() else (nd.hin - nd.p).len()
+        return Mode.NODE
+    }
+
+    private fun dragNode(doc: Offset) {
+        val data = nodeData ?: return
+        val item = nodeTarget ?: return
+        val s = nodeSel ?: return
+        val nd = data.getOrNull(s.first)?.nodes?.getOrNull(s.second) ?: return
+        if (!pushed) {
+            pushUndo()
+            pushed = true
+            item.kind = Kind.PATH
+        }
+        val q = snapPoint(doc, setOf(item.id))
+        val t = P(q.x.toDouble(), q.y.toDouble())
+        when (nodeDrag) {
+            1 -> {
+                val d = t - nd.p
+                nd.p = t
+                nd.hin = nd.hin + d
+                nd.hout = nd.hout + d
+            }
+            2 -> {
+                nd.hin = t
+                if (nodeCollinear) nd.hout = nd.p - (t - nd.p).unit() * nodeOpp
+            }
+            3 -> {
+                nd.hout = t
+                if (nodeCollinear) nd.hin = nd.p - (t - nd.p).unit() * nodeOpp
+            }
+        }
+        writeNodes(item, data)
+        touch()
+    }
+
+    /** Tap with the Nodes tool: add a point on the outline, otherwise select the shape under the finger. */
+    private fun nodeTap() {
+        val item = selectedItems().singleOrNull()
+        if (item != null) {
+            val data = Nodes.fromContours(PathBridge.toContours(item.path))
+            val hit = Nodes.nearest(data, P(downDoc.x.toDouble(), downDoc.y.toDouble()))
+            if (hit != null && hit.dist <= pickRadius / scale) {
+                pushUndo()
+                item.kind = Kind.PATH
+                val idx = Nodes.insert(data[hit.contour], hit.seg, hit.t)
+                writeNodes(item, data)
+                item.clearCornerOverrides()
+                nodeSel = hit.contour to idx
+                touch()
+                return
+            }
+        }
+        val h = hitTest(downDoc)
+        selection = if (h != null) setOf(h.id) else emptySet()
+        nodeSel = null
+        touch()
+    }
+
+    private fun editNodes(topology: Boolean, block: (MutableList<NodePath>, Int, Int) -> Unit) {
+        val item = selectedItems().singleOrNull() ?: return
+        val s = nodeSel ?: return
+        val data = Nodes.fromContours(PathBridge.toContours(item.path))
+        if (s.first !in data.indices || s.second !in data[s.first].nodes.indices) return
+        change {
+            item.kind = Kind.PATH
+            block(data, s.first, s.second)
+            writeNodes(item, data)
+            if (topology) item.clearCornerOverrides()
+        }
+    }
+
+    fun nodeMakeSmooth() = editNodes(false) { d, c, n -> Nodes.makeSmooth(d[c], n) }
+
+    fun nodeMakeCorner() = editNodes(false) { d, c, n -> Nodes.makeCorner(d[c], n) }
+
+    fun nodeRemove() = editNodes(true) { d, c, n ->
+        if (Nodes.delete(d[c], n)) nodeSel = c to (n - 1).coerceAtLeast(0)
+    }
+
+    fun nodeCutHere() = editNodes(true) { d, c, n ->
+        val parts = Nodes.cut(d[c], n)
+        d.removeAt(c)
+        d.addAll(c, parts)
+        nodeSel = null
+    }
+
+    /** Tap with the Scissors tool: cut the nearest outline open at the tapped spot. */
+    private fun scissorsTap() {
+        val p = P(downDoc.x.toDouble(), downDoc.y.toDouble())
+        var bestItem: Item? = null
+        var bestData: MutableList<NodePath>? = null
+        var bestHit: PathHit? = null
+        for (item in items) {
+            if (!item.visible || item.locked) continue
+            val data = Nodes.fromContours(PathBridge.toContours(item.path))
+            val h = Nodes.nearest(data, p) ?: continue
+            val cur = bestHit
+            if (h.dist <= pickRadius / scale && (cur == null || h.dist < cur.dist)) {
+                bestItem = item
+                bestData = data
+                bestHit = h
+            }
+        }
+        val item = bestItem
+        val data = bestData
+        val hit = bestHit
+        if (item == null || data == null || hit == null) return
+        change {
+            item.kind = Kind.PATH
+            val np = data[hit.contour]
+            val idx = Nodes.insert(np, hit.seg, hit.t)
+            val parts = Nodes.cut(np, idx)
+            data.removeAt(hit.contour)
+            data.addAll(hit.contour, parts)
+            writeNodes(item, data)
+            item.clearCornerOverrides()
+            selection = setOf(item.id)
+            nodeSel = null
+        }
+    }
+
+    // ---------- gradients, rotate, flip ----------
+    fun setFillType(kind: GKind?) {
+        if (selection.isEmpty()) return
+        change {
+            selectedItems().forEach { item ->
+                if (kind == null) {
+                    item.gradient = null
+                } else {
+                    val g = item.gradient
+                    if (g != null) {
+                        g.kind = kind
+                    } else {
+                        val c1 = item.fill ?: nextFill
+                        item.fill = c1
+                        item.gradient = Gradient(kind, c1, Gradient.lighter(c1), 0f)
+                    }
+                }
+            }
+        }
+    }
+
+    fun setGradientColor(second: Boolean, c: Int) {
+        if (selection.isEmpty()) return
+        change {
+            selectedItems().forEach { item ->
+                val g = item.gradient
+                if (g != null) {
+                    if (second) {
+                        g.c2 = c
+                    } else {
+                        g.c1 = c
+                        item.fill = c
+                    }
+                }
+            }
+        }
+    }
+
+    fun setGradientAngle(v: Float) = slide { selectedItems().forEach { it.gradient?.angle = v } }
+
+    private fun transformSelection(make: (Float, Float) -> Matrix) {
+        val box = selectionBox() ?: return
+        val m = make(box.centerX(), box.centerY())
+        val origs = selectedItems().map { it.copy() }
+        change {
+            for (o in origs) items.firstOrNull { it.id == o.id }?.applyMatrixFrom(o, m)
+        }
+    }
+
+    fun rotate90(clockwise: Boolean) =
+        transformSelection { cx, cy -> Matrix().apply { setRotate(if (clockwise) 90f else -90f, cx, cy) } }
+
+    fun flip(horizontal: Boolean) = transformSelection { cx, cy ->
+        Matrix().apply { if (horizontal) setScale(-1f, 1f, cx, cy) else setScale(1f, -1f, cx, cy) }
     }
 
     private fun pickCorner() {
@@ -411,7 +818,7 @@ class Editor {
 
     fun setFill(c: Int?) {
         if (c != null) nextFill = c
-        if (selection.isNotEmpty()) change { selectedItems().forEach { it.fill = c } }
+        if (selection.isNotEmpty()) change { selectedItems().forEach { it.fill = c; it.gradient = null } }
     }
 
     fun setStroke(c: Int?) {
@@ -505,7 +912,10 @@ class Editor {
 
     // ---------- knife ----------
     private fun cutPiece(src: Item, p: Path) =
-        Item(nextId++, Kind.PATH, p, RectF(), src.fill, src.stroke, src.strokeWidth).also { it.groupId = src.groupId }
+        Item(nextId++, Kind.PATH, p, RectF(), src.fill, src.stroke, src.strokeWidth).also {
+            it.groupId = src.groupId
+            it.gradient = src.gradient?.copy()
+        }
 
     /** Slices every shape crossed by the segment a-b along the (extended) line through it. */
     private fun cut(a: Offset, b: Offset) {
@@ -646,6 +1056,7 @@ class Editor {
         for (i in 1 until sel.size) result.op(sel[i].renderPath(), aop)
         val base = sel[0]
         val merged = Item(nextId++, Kind.PATH, result, RectF(), base.fill ?: sel.firstNotNullOfOrNull { it.fill }, base.stroke, base.strokeWidth)
+            .also { it.gradient = base.gradient?.copy() }
         val idx = items.indexOfFirst { it.id == base.id }
         change {
             val list = items.filter { it.id !in selection }.toMutableList()

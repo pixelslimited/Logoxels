@@ -61,14 +61,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ng.pixelslimited.logoxels.engine.AlignTo
 import ng.pixelslimited.logoxels.engine.Editor
+import ng.pixelslimited.logoxels.engine.GKind
 import ng.pixelslimited.logoxels.engine.Kind
 import ng.pixelslimited.logoxels.engine.Mode
 import ng.pixelslimited.logoxels.engine.PfOp
 import ng.pixelslimited.logoxels.engine.Tool
+import kotlin.math.floor
 import kotlin.math.roundToInt
 import android.graphics.Paint as APaint
 
-internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS }
+internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID }
 
 private val Ink = Color(0xFF111827)
 private val Muted = Color(0xFF9CA3AF)
@@ -88,11 +90,14 @@ fun EditorScreen(ed: Editor) {
             Tool.CORNERS -> CornersPanel(ed)
             Tool.PEN -> PenPanel(ed)
             Tool.KNIFE -> KnifePanel()
+            Tool.NODES -> NodesPanel(ed)
+            Tool.SCISSORS -> ScissorsPanel()
             else -> when (panel) {
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
                 Panel.ARRANGE -> ArrangePanel(ed)
                 Panel.LAYERS -> LayersPanel(ed)
+                Panel.GRID -> GridPanel(ed)
                 Panel.NONE -> Unit
             }
         }
@@ -114,6 +119,14 @@ private fun EditorCanvas(ed: Editor) {
         }
     }
     val artPaint = remember { APaint().apply { color = android.graphics.Color.WHITE } }
+    val gridPaint = remember {
+        APaint().apply {
+            color = android.graphics.Color.argb(60, 17, 24, 39)
+            style = APaint.Style.STROKE
+        }
+    }
+    val rulerBg = remember { APaint().apply { color = android.graphics.Color.WHITE } }
+    val rulerInk = remember { APaint(APaint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(75, 85, 99) } }
     Canvas(
         Modifier
             .fillMaxSize()
@@ -151,10 +164,23 @@ private fun EditorCanvas(ed: Editor) {
             nc.translate(tx, ty)
             nc.scale(s, s)
             nc.drawRect(ed.artboard, artPaint)
+            if (ed.showGrid) {
+                gridPaint.strokeWidth = 1f / s
+                val a = ed.artboard
+                var gx = a.left
+                while (gx <= a.right + 0.01f) { nc.drawLine(gx, a.top, gx, a.bottom, gridPaint); gx += ed.gridSize }
+                var gy = a.top
+                while (gy <= a.bottom + 0.01f) { nc.drawLine(a.left, gy, a.right, gy, gridPaint); gy += ed.gridSize }
+            }
             for (item in ed.items) {
                 if (!item.visible) continue
                 val rp = item.renderPath()
-                item.fill?.let { fillPaint.color = it; nc.drawPath(rp, fillPaint) }
+                item.fill?.let {
+                    fillPaint.color = it
+                    fillPaint.shader = item.gradient?.shader(item.box())
+                    nc.drawPath(rp, fillPaint)
+                    fillPaint.shader = null
+                }
                 item.stroke?.let {
                     if (item.strokeWidth > 0f) {
                         strokePaint.color = it
@@ -176,6 +202,39 @@ private fun EditorCanvas(ed: Editor) {
                 val o = Offset(p.x - 10f, p.y - 10f)
                 drawRect(Color.White, o, Size(20f, 20f))
                 drawRect(Accent, o, Size(20f, 20f), style = Stroke(width = 3f))
+            }
+        }
+        if (ed.tool == Tool.SELECT) {
+            val bx = ed.selectionBox()
+            val rh = ed.rotateHandle()
+            if (bx != null && rh != null) {
+                val top = ed.toScreen(bx.centerX(), bx.top)
+                drawLine(Accent, top, rh, 2f)
+                drawCircle(Color.White, 13f, rh)
+                drawCircle(Accent, 13f, rh, style = Stroke(width = 3f))
+                drawCircle(Accent, 4f, rh)
+            }
+        }
+        if (ed.tool == Tool.NODES) {
+            val orange = Color(0xFFEA580C)
+            val picked = ed.nodeSel
+            for ((ci, np) in ed.nodePaths().withIndex()) {
+                for ((ni, nd) in np.nodes.withIndex()) {
+                    val c = ed.toScreen(nd.p.x.toFloat(), nd.p.y.toFloat())
+                    val on = picked != null && picked.first == ci && picked.second == ni
+                    if (on) {
+                        for (h in listOf(nd.hin, nd.hout)) {
+                            if (h.x == nd.p.x && h.y == nd.p.y) continue
+                            val hs = ed.toScreen(h.x.toFloat(), h.y.toFloat())
+                            drawLine(orange, c, hs, 2f)
+                            drawCircle(Color.White, 9f, hs)
+                            drawCircle(orange, 9f, hs, style = Stroke(width = 3f))
+                        }
+                    }
+                    val o = Offset(c.x - 10f, c.y - 10f)
+                    drawRect(if (on) orange else Color.White, o, Size(20f, 20f))
+                    drawRect(if (on) orange else Accent, o, Size(20f, 20f), style = Stroke(width = 3f))
+                }
             }
         }
         if (ed.tool == Tool.CORNERS) {
@@ -215,6 +274,61 @@ private fun EditorCanvas(ed: Editor) {
                 val o = Offset(c.x - 9f, c.y - 9f)
                 drawRect(if (i == 0) Color(0xFF16A34A) else Color.White, o, Size(18f, 18f))
                 drawRect(Accent, o, Size(18f, 18f), style = Stroke(width = 3f))
+            }
+        }
+        val magenta = Color(0xFFDB2777)
+        for (g in ed.guides) {
+            if (g.vertical) {
+                val x = ed.toScreen(g.pos, 0f).x
+                drawLine(magenta, Offset(x, 0f), Offset(x, size.height), 2f)
+            } else {
+                val y = ed.toScreen(0f, g.pos).y
+                drawLine(magenta, Offset(0f, y), Offset(size.width, y), 2f)
+            }
+        }
+        for (g in ed.snapHints) {
+            val cyan = Color(0xFF06B6D4)
+            if (g.vertical) {
+                val x = ed.toScreen(g.pos, 0f).x
+                drawLine(cyan, Offset(x, 0f), Offset(x, size.height), 2f)
+            } else {
+                val y = ed.toScreen(0f, g.pos).y
+                drawLine(cyan, Offset(0f, y), Offset(size.width, y), 2f)
+            }
+        }
+        if (ed.showRulers) {
+            val th = 22.dp.toPx()
+            rulerInk.textSize = 12.sp.toPx()
+            val steps = floatArrayOf(10f, 25f, 50f, 100f, 250f, 500f, 1000f)
+            val step = steps.firstOrNull { it * ed.scale >= 56f } ?: 1000f
+            drawIntoCanvas { c ->
+                val nc = c.nativeCanvas
+                nc.drawRect(0f, 0f, size.width, th, rulerBg)
+                nc.drawRect(0f, 0f, th, size.height, rulerBg)
+                rulerInk.strokeWidth = 1f
+                var v = floor(ed.toDoc(Offset(0f, 0f)).x / step) * step
+                val endX = ed.toDoc(Offset(size.width, 0f)).x
+                while (v <= endX) {
+                    val sx = ed.toScreen(v, 0f).x
+                    if (sx >= th) {
+                        nc.drawLine(sx, th * 0.55f, sx, th, rulerInk)
+                        nc.drawText(v.roundToInt().toString(), sx + 4f, th * 0.5f, rulerInk)
+                    }
+                    v += step
+                }
+                var u = floor(ed.toDoc(Offset(0f, 0f)).y / step) * step
+                val endY = ed.toDoc(Offset(0f, size.height)).y
+                while (u <= endY) {
+                    val sy = ed.toScreen(0f, u).y
+                    if (sy >= th) {
+                        nc.drawLine(th * 0.55f, sy, th, sy, rulerInk)
+                        nc.save()
+                        nc.rotate(-90f, th * 0.5f, sy - 4f)
+                        nc.drawText(u.roundToInt().toString(), th * 0.5f, sy - 4f, rulerInk)
+                        nc.restore()
+                    }
+                    u += step
+                }
             }
         }
         ed.knife?.let { (a, b) ->
@@ -262,12 +376,15 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Line, "Line", ed.tool == Tool.LINE) { ed.tool = Tool.LINE }
         ToolBtn(G.Pen, "Pen", ed.tool == Tool.PEN) { ed.tool = Tool.PEN }
         ToolBtn(G.Knife, "Knife", ed.tool == Tool.KNIFE) { ed.tool = Tool.KNIFE }
+        ToolBtn(G.Nodes, "Nodes", ed.tool == Tool.NODES) { ed.tool = Tool.NODES }
+        ToolBtn(G.Scissors, "Scissors", ed.tool == Tool.SCISSORS) { ed.tool = Tool.SCISSORS }
         ToolBtn(G.Corner, "Corners", ed.tool == Tool.CORNERS) { ed.tool = Tool.CORNERS }
         VerticalDivider(Modifier.height(36.dp).padding(horizontal = 4.dp))
         ToolBtn(G.Style, "Style", panel == Panel.STYLE) { onPanel(Panel.STYLE) }
         ToolBtn(G.Union, "Combine", panel == Panel.COMBINE) { onPanel(Panel.COMBINE) }
         ToolBtn(G.Arrange, "Arrange", panel == Panel.ARRANGE) { onPanel(Panel.ARRANGE) }
         ToolBtn(G.Layers, "Layers", panel == Panel.LAYERS) { onPanel(Panel.LAYERS) }
+        ToolBtn(G.Grid, "Grid", panel == Panel.GRID) { onPanel(Panel.GRID) }
     }
 }
 
@@ -356,7 +473,21 @@ private fun StylePanel(ed: Editor) {
             return@PanelBox
         }
         Label("Fill")
-        ColorRow(first.fill, true) { ed.setFill(it) }
+        val grad = first.gradient
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(grad == null, { ed.setFillType(null) }, { Text("Solid", fontSize = 12.sp) })
+            FilterChip(grad?.kind == GKind.LINEAR, { ed.setFillType(GKind.LINEAR) }, { Text("Linear", fontSize = 12.sp) })
+            FilterChip(grad?.kind == GKind.RADIAL, { ed.setFillType(GKind.RADIAL) }, { Text("Radial", fontSize = 12.sp) })
+        }
+        if (grad == null) {
+            ColorRow(first.fill, true) { ed.setFill(it) }
+        } else {
+            Label("Start colour")
+            ColorRow(grad.c1, false) { c -> if (c != null) ed.setGradientColor(false, c) }
+            Label("End colour")
+            ColorRow(grad.c2, false) { c -> if (c != null) ed.setGradientColor(true, c) }
+            if (grad.kind == GKind.LINEAR) SliderRow("Angle", grad.angle, 0f..360f, 0, ed::endSlide) { ed.setGradientAngle(it) }
+        }
         Label("Stroke")
         ColorRow(first.stroke, true) { ed.setStroke(it) }
         SliderRow("Stroke width", first.strokeWidth, 0f..60f, 0, ed::endSlide) { ed.setStrokeWidth(it) }
@@ -389,6 +520,51 @@ private fun PenPanel(ed: Editor) {
 private fun KnifePanel() {
     PanelBox {
         Label("Drag a line across shapes to cut them along it. With a selection, only the selected shapes are cut.")
+    }
+}
+
+@Composable
+private fun ScissorsPanel() {
+    PanelBox {
+        Label("Tap an outline to cut it open at that spot. Closed shapes become open paths.")
+    }
+}
+
+@Composable
+private fun NodesPanel(ed: Editor) {
+    ed.version
+    val has = ed.nodeSel != null
+    PanelBox {
+        if (ed.selectedItems().size != 1) {
+            Label("Tap a shape to edit its points.")
+            return@PanelBox
+        }
+        Label("Drag a point or its handles. Tap the outline to add a point. Editing turns the shape into a free path.")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Smooth", has) { ed.nodeMakeSmooth() }
+            Act("Corner", has) { ed.nodeMakeCorner() }
+            Act("Delete point", has) { ed.nodeRemove() }
+            Act("Cut here", has) { ed.nodeCutHere() }
+        }
+    }
+}
+
+@Composable
+private fun GridPanel(ed: Editor) {
+    PanelBox {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(ed.showGrid, { ed.showGrid = !ed.showGrid }, { Text("Show grid", fontSize = 12.sp) })
+            FilterChip(ed.snapGrid, { ed.snapGrid = !ed.snapGrid }, { Text("Snap to grid", fontSize = 12.sp) })
+            FilterChip(ed.snapObjects, { ed.snapObjects = !ed.snapObjects }, { Text("Snap to objects", fontSize = 12.sp) })
+            FilterChip(ed.showRulers, { ed.showRulers = !ed.showRulers }, { Text("Rulers", fontSize = 12.sp) })
+        }
+        SliderRow("Grid size", ed.gridSize, 10f..100f, 8, {}) { ed.gridSize = it }
+        Label("Guides: drag one off the canvas to remove it.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Vertical guide", true) { ed.addGuide(true) }
+            Act("Horizontal guide", true) { ed.addGuide(false) }
+            Act("Clear guides", ed.guides.isNotEmpty()) { ed.clearGuides() }
+        }
     }
 }
 
@@ -524,6 +700,13 @@ private fun ArrangePanel(ed: Editor) {
             Act("Group", n >= 2) { ed.group() }
             Act("Ungroup", ed.selectedItems().any { it.groupId != 0L }) { ed.ungroup() }
             Act("Clip to top shape", n >= 2) { ed.clipToTop() }
+        }
+        Label("Rotate and flip")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Rotate left", n > 0) { ed.rotate90(false) }
+            Act("Rotate right", n > 0) { ed.rotate90(true) }
+            Act("Flip horizontal", n > 0) { ed.flip(true) }
+            Act("Flip vertical", n > 0) { ed.flip(false) }
         }
         Label("Order and edit")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
