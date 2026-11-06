@@ -191,8 +191,10 @@ fun EditorScreen(ed: Editor) {
             }
         }
     }
+    var updating by remember { mutableStateOf(false) }
+    if (updating) UpdateDialog { updating = false }
     Column(Modifier.fillMaxSize().background(Color(0xFFECEFF1)).safeDrawingPadding()) {
-        TopBar(ed) { op ->
+        TopBar(ed, { updating = true }) { op ->
             when (op) {
                 FileOp.SVG -> svgOut.launch("logo.svg")
                 FileOp.PNG -> pngOut.launch("logo.png")
@@ -455,7 +457,7 @@ private fun EditorCanvas(ed: Editor) {
 // ---------------- bars ----------------
 
 @Composable
-private fun TopBar(ed: Editor, onFile: (FileOp) -> Unit) {
+private fun TopBar(ed: Editor, onUpdate: () -> Unit, onFile: (FileOp) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 8.dp, vertical = 4.dp),
@@ -472,6 +474,7 @@ private fun TopBar(ed: Editor, onFile: (FileOp) -> Unit) {
                 )) {
                     DropdownMenuItem({ Text(label, fontSize = 14.sp) }, { menu = false; onFile(op) })
                 }
+                DropdownMenuItem({ Text("Check for updates", fontSize = 14.sp) }, { menu = false; onUpdate() })
             }
         }
         IconBtn(G.Undo, ed.canUndo) { ed.undo() }

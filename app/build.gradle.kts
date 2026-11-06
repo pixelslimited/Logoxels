@@ -12,12 +12,26 @@ android {
         applicationId = "ng.pixelslimited.logoxels"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI passes -PbuildNumber so every release has a higher versionCode than the last.
+        val build = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "0.1.$build"
+    }
+
+    // One fixed key for every build, so a new APK can install over the old one.
+    signingConfigs {
+        create("shared") {
+            storeFile = file("logoxels.keystore")
+            storePassword = "logoxels"
+            keyAlias = "logoxels"
+            keyPassword = "logoxels"
+        }
     }
 
     buildTypes {
+        debug { signingConfig = signingConfigs.getByName("shared") }
         release {
+            signingConfig = signingConfigs.getByName("shared")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
