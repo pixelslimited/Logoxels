@@ -162,6 +162,7 @@ object Export {
                 .put("fill", it.fill ?: JSONObject.NULL).put("stroke", it.stroke ?: JSONObject.NULL)
                 .put("strokeWidth", it.strokeWidth.toDouble()).put("corner", it.corner.toDouble())
                 .put("sides", it.sides).put("inner", it.inner.toDouble())
+                .put("xf", JSONArray().apply { val v = FloatArray(9); it.xf.getValues(v); v.forEach { f -> put(f.toDouble()) } })
                 .put("group", it.groupId).put("visible", it.visible).put("locked", it.locked)
             val radii = JSONObject()
             for ((k, v) in it.cornerR) radii.put(k.toString(), v.toDouble())
@@ -191,6 +192,9 @@ object Export {
                 o.getDouble("strokeWidth").toFloat(), o.getDouble("corner").toFloat(),
                 o.getInt("sides"), o.getDouble("inner").toFloat(),
             )
+            o.optJSONArray("xf")?.let { a ->
+                item.xf.setValues(FloatArray(9) { k -> a.getDouble(k).toFloat() })
+            }
             item.groupId = o.getLong("group")
             item.visible = o.getBoolean("visible")
             item.locked = o.getBoolean("locked")

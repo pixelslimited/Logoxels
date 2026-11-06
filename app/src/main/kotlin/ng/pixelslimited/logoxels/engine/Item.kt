@@ -53,6 +53,9 @@ class Item(
 
     val parametric: Boolean get() = kind != Kind.PATH
 
+    /** Rotation, flip and resize of a live shape: the outline is [bounds] built as a shape, then moved by this. */
+    val xf = Matrix()
+
     fun radiusAt(i: Int): Float = cornerR[i] ?: corner
 
     fun setCornerAt(i: Int, v: Float) {
@@ -73,6 +76,7 @@ class Item(
                 it.visible = visible
                 it.locked = locked
                 it.gradient = gradient?.copy()
+                it.xf.set(xf)
             }
 
     fun copy() = copyWithId(id)
@@ -88,35 +92,27 @@ class Item(
     fun box(): RectF = RectF().also { path.computeBounds(it, true) }
 
     fun rebuild() {
-        if (parametric) path = buildShape(kind, bounds, sides, inner)
+        if (parametric) path = buildShape(kind, bounds, sides, inner).also { it.transform(xf) }
     }
 
     fun offset(dx: Float, dy: Float) {
         path.offset(dx, dy)
-        bounds.offset(dx, dy)
+        if (parametric) xf.postTranslate(dx, dy)
         cache?.offset(dx, dy)
     }
 
-    /** Re-derive this item from [orig] transformed by [m] (used for live resize). */
+    /** Re-derive this item from [orig] transformed by [m] (live resize, rotate, flip). Live shapes stay live. */
     fun applyFrom(orig: Item, m: Matrix) {
         if (parametric) {
-            val r = RectF()
-            m.mapRect(r, orig.bounds)
-            bounds = r
+            bounds = RectF(orig.bounds)
+            xf.set(orig.xf)
+            xf.postConcat(m)
             rebuild()
         } else {
             val p = Path(orig.path)
             p.transform(m)
             path = p
         }
-    }
-
-    /** Rotate/flip: always bakes the move into the outline, so the item stops being a live shape. */
-    fun applyMatrixFrom(orig: Item, m: Matrix) {
-        val p = Path(orig.path)
-        p.transform(m)
-        kind = Kind.PATH
-        path = p
     }
 
     /** Corner points of the sharp outline, for the corner-editing dots. */

@@ -436,7 +436,7 @@ class Editor {
                     if (abs(s - deg) < 4f) deg = s
                 }
                 val m = Matrix().apply { setRotate(deg, rotCenter.x, rotCenter.y) }
-                for (o in origSel) items.firstOrNull { it.id == o.id }?.applyMatrixFrom(o, m)
+                for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
                 touch()
             }
             Mode.GUIDE -> {
@@ -711,7 +711,7 @@ class Editor {
         val m = make(box.centerX(), box.centerY())
         val origs = selectedItems().map { it.copy() }
         change {
-            for (o in origs) items.firstOrNull { it.id == o.id }?.applyMatrixFrom(o, m)
+            for (o in origs) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
         }
     }
 
