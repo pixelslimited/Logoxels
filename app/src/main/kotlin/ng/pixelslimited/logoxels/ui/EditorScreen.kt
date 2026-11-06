@@ -232,14 +232,6 @@ fun EditorScreen(ed: Editor) {
 @Composable
 private fun EditorCanvas(ed: Editor) {
     val handleR = with(LocalDensity.current) { 24.dp.toPx() }
-    val fillPaint = remember { APaint(APaint.ANTI_ALIAS_FLAG) }
-    val strokePaint = remember {
-        APaint(APaint.ANTI_ALIAS_FLAG).apply {
-            style = APaint.Style.STROKE
-            strokeJoin = APaint.Join.ROUND
-            strokeCap = APaint.Cap.ROUND
-        }
-    }
     val artPaint = remember { APaint().apply { color = android.graphics.Color.WHITE } }
     val gridPaint = remember {
         APaint().apply {
@@ -294,23 +286,7 @@ private fun EditorCanvas(ed: Editor) {
                 var gy = a.top
                 while (gy <= a.bottom + 0.01f) { nc.drawLine(a.left, gy, a.right, gy, gridPaint); gy += ed.gridSize }
             }
-            for (item in ed.items) {
-                if (!item.visible) continue
-                val rp = item.renderPath()
-                item.fill?.let {
-                    fillPaint.color = it
-                    fillPaint.shader = item.gradient?.shader(item.box())
-                    nc.drawPath(rp, fillPaint)
-                    fillPaint.shader = null
-                }
-                item.stroke?.let {
-                    if (item.strokeWidth > 0f) {
-                        strokePaint.color = it
-                        strokePaint.strokeWidth = item.strokeWidth
-                        nc.drawPath(rp, strokePaint)
-                    }
-                }
-            }
+            Render.draw(nc, ed.items)
             nc.restore()
         }
         ed.selectionBox()?.let { b ->

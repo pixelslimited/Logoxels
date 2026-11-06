@@ -1,6 +1,7 @@
 package ng.pixelslimited.logoxels.engine.geom
 
 import kotlin.math.abs
+import kotlin.math.acos
 
 /** Turns a black-and-white grid into closed outlines (bitmap trace). */
 object Trace {
@@ -80,5 +81,39 @@ object Trace {
         }
         if (worst <= tol) return listOf(a, b)
         return douglasPeucker(pts.subList(0, idx + 1), tol).dropLast(1) + douglasPeucker(pts.subList(idx, pts.size), tol)
+    }
+
+    /**
+     * Closed outline through [loop] as curves: gentle bends become smooth, turns sharper than [cornerDeg]
+     * stay as corners.
+     */
+    fun smoothContour(loop: List<P>, cornerDeg: Double = 55.0): Contour {
+        val n = loop.size
+        val tIn = ArrayList<P>(n)
+        val tOut = ArrayList<P>(n)
+        for (i in 0 until n) {
+            val prev = loop[(i + n - 1) % n]
+            val p = loop[i]
+            val next = loop[(i + 1) % n]
+            val din = (p - prev).unit()
+            val dout = (next - p).unit()
+            val turn = Math.toDegrees(acos((din dot dout).coerceIn(-1.0, 1.0)))
+            if (turn > cornerDeg) {
+                tIn.add(din)
+                tOut.add(dout)
+            } else {
+                val t = (next - prev).unit()
+                tIn.add(t)
+                tOut.add(t)
+            }
+        }
+        val segs = ArrayList<Seg>(n)
+        for (i in 0 until n) {
+            val a = loop[i]
+            val b = loop[(i + 1) % n]
+            val third = (b - a).len() / 3.0
+            segs.add(Seg.cubic(a, a + tOut[i] * third, b - tIn[(i + 1) % n] * third, b))
+        }
+        return Contour(segs, true)
     }
 }

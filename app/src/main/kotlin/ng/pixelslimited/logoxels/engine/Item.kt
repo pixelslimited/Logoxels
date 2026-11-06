@@ -1,6 +1,8 @@
 package ng.pixelslimited.logoxels.engine
 
+import android.graphics.DashPathEffect
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import ng.pixelslimited.logoxels.engine.geom.PathBridge
@@ -11,7 +13,7 @@ import kotlin.math.sin
 
 enum class Kind { RECT, ELLIPSE, POLYGON, STAR, PATH, TEXT }
 
-/** One vector object. Geometry lives in artboard units (1000 x 1000). */
+/** One vector object. Geometry lives in artboard units. */
 class Item(
     val id: Long,
     var kind: Kind,
@@ -48,6 +50,14 @@ class Item(
     var visible = true
     var locked = false
 
+    /** Whole-object transparency, 0 to 1. */
+    var opacity = 1f
+
+    /** Stroke style: dash 0 solid, 1 dashed, 2 dotted; cap 0 round, 1 flat, 2 square; join 0 round, 1 sharp, 2 bevel. */
+    var dash = 0
+    var cap = 0
+    var join = 0
+
     /** When set, replaces the flat [fill] colour while drawing. */
     var gradient: Gradient? = null
 
@@ -80,10 +90,37 @@ class Item(
                 it.locked = locked
                 it.gradient = gradient?.copy()
                 it.xf.set(xf)
+                it.opacity = opacity
+                it.dash = dash
+                it.cap = cap
+                it.join = join
                 it.text = text?.copy()
             }
 
     fun copy() = copyWithId(id)
+
+    /** Sets width, caps, joins and dashes on a stroke [p]; colour is left to the caller. */
+    fun configureStroke(p: Paint) {
+        val w = maxOf(strokeWidth, 1f)
+        p.strokeWidth = strokeWidth
+        p.strokeCap = when {
+            dash == 2 -> Paint.Cap.ROUND
+            cap == 1 -> Paint.Cap.BUTT
+            cap == 2 -> Paint.Cap.SQUARE
+            else -> Paint.Cap.ROUND
+        }
+        p.strokeJoin = when (join) {
+            1 -> Paint.Join.MITER
+            2 -> Paint.Join.BEVEL
+            else -> Paint.Join.ROUND
+        }
+        p.strokeMiter = 4f
+        p.pathEffect = when (dash) {
+            1 -> DashPathEffect(floatArrayOf(w * 3f, w * 2f), 0f)
+            2 -> DashPathEffect(floatArrayOf(0.01f, w * 2f), 0f)
+            else -> null
+        }
+    }
 
     fun label(): String = when (kind) {
         Kind.RECT -> "Rectangle"

@@ -15,59 +15,43 @@ import ng.pixelslimited.logoxels.engine.geom.Warp
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.roundToInt
 
-/** Writes the artboard (1000 x 1000 units) to SVG, PNG and PDF, and saves/loads project files. */
+/** The whole document: shapes plus artboard size and background (null = transparent). */
+class Doc(val items: List<Item>, val w: Float, val h: Float, val background: Int?)
+
+/** Writes the artboard to SVG, PNG, PDF, PSD, EPS, and saves/loads project files. */
 object Export {
-    private const val SIZE = 1000
 
-    private fun draw(canvas: Canvas, items: List<Item>) {
-        val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeJoin = Paint.Join.ROUND
-            strokeCap = Paint.Cap.ROUND
-        }
-        for (item in items) {
-            if (!item.visible) continue
-            val rp = item.renderPath()
-            item.fill?.let {
-                fill.color = it
-                fill.shader = item.gradient?.shader(item.box())
-                canvas.drawPath(rp, fill)
-                fill.shader = null
-            }
-            item.stroke?.let {
-                if (item.strokeWidth > 0f) {
-                    stroke.color = it
-                    stroke.strokeWidth = item.strokeWidth
-                    canvas.drawPath(rp, stroke)
-                }
-            }
-        }
-    }
+    private fun px(v: Float, k: Float) = (v * k).roundToInt().coerceAtLeast(1)
 
-    /** Transparent PNG, [px] pixels square. */
-    fun png(items: List<Item>, out: OutputStream, px: Int = 2000) {
-        val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+    /** PNG at up to [maxPx] on the long side; transparent unless the document has a background. */
+    fun png(doc: Doc, out: OutputStream, maxPx: Int = 2000) {
+        val k = maxPx / max(doc.w, doc.h)
+        val bmp = Bitmap.createBitmap(px(doc.w, k), px(doc.h, k), Bitmap.Config.ARGB_8888)
         try {
             val c = Canvas(bmp)
-            c.scale(px / SIZE.toFloat(), px / SIZE.toFloat())
-            draw(c, items)
+            doc.background?.let { c.drawColor(it) }
+            c.scale(k, k)
+            Render.draw(c, doc.items)
             bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         } finally {
             bmp.recycle()
         }
     }
 
-    fun pdf(items: List<Item>, out: OutputStream) {
-        val doc = PdfDocument()
+    fun pdf(doc: Doc, out: OutputStream) {
+        val pdf = PdfDocument()
         try {
-            val page = doc.startPage(PdfDocument.PageInfo.Builder(SIZE, SIZE, 1).create())
-            draw(page.canvas, items)
-            doc.finishPage(page)
-            doc.writeTo(out)
+            val page = pdf.startPage(PdfDocument.PageInfo.Builder(px(doc.w, 1f), px(doc.h, 1f), 1).create())
+            doc.background?.let { page.canvas.drawColor(it) }
+            Render.draw(page.canvas, doc.items)
+            pdf.finishPage(page)
+            pdf.writeTo(out)
         } finally {
-            doc.close()
+            pdf.close()
         }
     }
 
@@ -75,10 +59,13 @@ object Export {
 
     private fun opacity(c: Int) = (c ushr 24) / 255f
 
-    fun svg(items: List<Item>): String {
+    fun svg(doc: Doc): String {
         val defs = StringBuilder()
         val body = StringBuilder()
-        for (item in items) {
+        doc.background?.let {
+            body.append("<rect width=\"${doc.w}\" height=\"${doc.h}\" fill=\"${hex(it)}\"/>\n")
+        }
+        for (item in doc.items) {
             if (!item.visible) continue
             val rp = item.renderPath()
             val d = PathData.of(PathBridge.toContours(rp))
@@ -108,42 +95,52 @@ object Export {
             if (evenOdd) a.append(" fill-rule=\"evenodd\"")
             val strokeColor = item.stroke
             if (strokeColor != null && item.strokeWidth > 0f) {
-                a.append(" stroke=\"${hex(strokeColor)}\" stroke-width=\"${item.strokeWidth}\" stroke-linejoin=\"round\" stroke-linecap=\"round\"")
+                val cap = if (item.dash == 2) "round" else when (item.cap) { 1 -> "butt"; 2 -> "square"; else -> "round" }
+                val join = when (item.join) { 1 -> "miter"; 2 -> "bevel"; else -> "round" }
+                a.append(" stroke=\"${hex(strokeColor)}\" stroke-width=\"${item.strokeWidth}\" stroke-linejoin=\"$join\" stroke-linecap=\"$cap\"")
+                val u = maxOf(item.strokeWidth, 1f)
+                if (item.dash == 1) a.append(" stroke-dasharray=\"${u * 3f} ${u * 2f}\"")
+                if (item.dash == 2) a.append(" stroke-dasharray=\"0.01 ${u * 2f}\"")
                 if (opacity(strokeColor) < 1f) a.append(" stroke-opacity=\"${opacity(strokeColor)}\"")
             }
+            if (item.opacity < 0.999f) a.append(" opacity=\"${item.opacity}\"")
             body.append(a).append("/>\n")
         }
-        val head = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"$SIZE\" height=\"$SIZE\" viewBox=\"0 0 $SIZE $SIZE\">\n"
+        val head = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${doc.w}\" height=\"${doc.h}\" viewBox=\"0 0 ${doc.w} ${doc.h}\">\n"
         val defsTag = if (defs.isEmpty()) "" else "<defs>$defs</defs>\n"
         return head + defsTag + body + "</svg>\n"
     }
 
     /** Photoshop file: one transparent layer per visible item plus a merged image. */
-    fun psd(items: List<Item>, out: OutputStream, px: Int = 2000) {
-        val k = px / SIZE.toFloat()
+    fun psd(doc: Doc, out: OutputStream, maxPx: Int = 2000) {
+        val k = maxPx / max(doc.w, doc.h)
+        val pw = px(doc.w, k)
+        val ph = px(doc.h, k)
         val layers = ArrayList<PsdLayer>()
-        for (item in items) {
+        doc.background?.let { layers.add(PsdLayer("Background", 0, 0, pw, ph, pixels(emptyList(), 0, 0, pw, ph, k, it))) }
+        for (item in doc.items) {
             if (!item.visible) continue
             val b = RectF(item.box())
             val pad = if (item.stroke != null) item.strokeWidth / 2f else 0f
             b.inset(-pad - 1f, -pad - 1f)
             val l = maxOf(0, Math.floor((b.left * k).toDouble()).toInt())
             val t = maxOf(0, Math.floor((b.top * k).toDouble()).toInt())
-            val r = minOf(px, Math.ceil((b.right * k).toDouble()).toInt())
-            val bt = minOf(px, Math.ceil((b.bottom * k).toDouble()).toInt())
+            val r = minOf(pw, Math.ceil((b.right * k).toDouble()).toInt())
+            val bt = minOf(ph, Math.ceil((b.bottom * k).toDouble()).toInt())
             if (r <= l || bt <= t) continue
-            layers.add(PsdLayer(item.label(), l, t, r - l, bt - t, pixels(listOf(item), l, t, r - l, bt - t, k)))
+            layers.add(PsdLayer(item.label(), l, t, r - l, bt - t, pixels(listOf(item), l, t, r - l, bt - t, k, null)))
         }
-        Psd.write(px, px, layers, pixels(items, 0, 0, px, px, k), out)
+        Psd.write(pw, ph, layers, pixels(doc.items, 0, 0, pw, ph, k, doc.background), out)
     }
 
-    private fun pixels(items: List<Item>, left: Int, top: Int, w: Int, h: Int, k: Float): ByteArray {
+    private fun pixels(items: List<Item>, left: Int, top: Int, w: Int, h: Int, k: Float, bg: Int?): ByteArray {
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         try {
             val c = Canvas(bmp)
+            bg?.let { c.drawColor(it) }
             c.translate(-left.toFloat(), -top.toFloat())
             c.scale(k, k)
-            draw(c, items)
+            Render.draw(c, items)
             val ints = IntArray(w * h)
             bmp.getPixels(ints, 0, w, 0, 0, w, h)
             val out = ByteArray(w * h * 4)
@@ -162,14 +159,26 @@ object Export {
 
     private fun rgb(c: Int) = "${PathData.num(((c shr 16) and 0xFF) / 255.0)} ${PathData.num(((c shr 8) and 0xFF) / 255.0)} ${PathData.num((c and 0xFF) / 255.0)}"
 
+    private fun epsDash(item: Item): String {
+        val u2 = PathData.num(maxOf(item.strokeWidth, 1f).toDouble() * 2.0)
+        val u3 = PathData.num(maxOf(item.strokeWidth, 1f).toDouble() * 3.0)
+        return when (item.dash) {
+            1 -> "[$u3 $u2] 0 setdash"
+            2 -> "[0.01 $u2] 0 setdash"
+            else -> "[] 0 setdash"
+        }
+    }
+
     private fun psColors(c1: Int, c2: Int) =
         "/Function << /FunctionType 2 /Domain [0 1] /C0 [${rgb(c1)}] /C1 [${rgb(c2)}] /N 1 >>"
 
     /** Encapsulated PostScript (level 3). Transparency is not supported by EPS, so alpha is ignored. */
-    fun eps(items: List<Item>): String {
-        val sb = StringBuilder("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 $SIZE $SIZE\n%%LanguageLevel: 3\n%%EndComments\n")
-        val h = SIZE.toDouble()
-        for (item in items) {
+    fun eps(doc: Doc): String {
+        val w = ceil(doc.w.toDouble()).toInt()
+        val h = doc.h.toDouble()
+        val sb = StringBuilder("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 $w ${ceil(h).toInt()}\n%%LanguageLevel: 3\n%%EndComments\n")
+        doc.background?.let { sb.append("${rgb(it)} setrgbcolor 0 0 ${PathData.num(doc.w.toDouble())} ${PathData.num(h)} rectfill\n") }
+        for (item in doc.items) {
             if (!item.visible) continue
             val rp = item.renderPath()
             val path = PathData.postScript(PathBridge.toContours(rp), h)
@@ -192,7 +201,7 @@ object Export {
             }
             val sc = item.stroke
             if (sc != null && item.strokeWidth > 0f) {
-                sb.append("${rgb(sc)} setrgbcolor ${PathData.num(item.strokeWidth.toDouble())} setlinewidth 1 setlinejoin 1 setlinecap newpath $path stroke\n")
+                sb.append("${rgb(sc)} setrgbcolor ${PathData.num(item.strokeWidth.toDouble())} setlinewidth ${item.join.let { if (it == 1) 0 else if (it == 2) 2 else 1 }} setlinejoin ${if (item.dash == 2) 1 else when (item.cap) { 1 -> 0; 2 -> 2; else -> 1 }} setlinecap ${epsDash(item)} newpath $path stroke [] 0 setdash\n")
             }
         }
         sb.append("showpage\n%%EOF\n")
@@ -259,9 +268,9 @@ object Export {
         )
     }
 
-    fun projectJson(items: List<Item>): String {
+    fun projectJson(doc: Doc): String {
         val arr = JSONArray()
-        for (it in items) {
+        for (it in doc.items) {
             val o = JSONObject()
                 .put("id", it.id).put("kind", it.kind.name)
                 .put("path", pathJson(it.path)).put("bounds", rectJson(it.bounds))
@@ -269,6 +278,7 @@ object Export {
                 .put("strokeWidth", it.strokeWidth.toDouble()).put("corner", it.corner.toDouble())
                 .put("sides", it.sides).put("inner", it.inner.toDouble())
                 .put("xf", JSONArray().apply { val v = FloatArray(9); it.xf.getValues(v); v.forEach { f -> put(f.toDouble()) } })
+                .put("opacity", it.opacity.toDouble()).put("dash", it.dash).put("cap", it.cap).put("join", it.join)
                 .put("group", it.groupId).put("visible", it.visible).put("locked", it.locked)
             val radii = JSONObject()
             for ((k, v) in it.cornerR) radii.put(k.toString(), v.toDouble())
@@ -279,11 +289,13 @@ object Export {
             it.text?.let { t -> o.put("text", textJson(t)) }
             arr.put(o)
         }
-        return JSONObject().put("app", "Logoxels").put("version", 1).put("items", arr).toString()
+        return JSONObject().put("app", "Logoxels").put("version", 1).put("items", arr)
+            .put("width", doc.w.toDouble()).put("height", doc.h.toDouble()).put("background", doc.background ?: JSONObject.NULL)
+            .toString()
     }
 
     /** Throws on a file that is not a Logoxels project. */
-    fun readProject(text: String): List<Item> {
+    fun readProject(text: String): Doc {
         val root = JSONObject(text)
         require(root.optString("app") == "Logoxels") { "Not a Logoxels project" }
         val arr = root.getJSONArray("items")
@@ -303,6 +315,10 @@ object Export {
                 item.xf.setValues(FloatArray(9) { k -> a.getDouble(k).toFloat() })
             }
             o.optJSONObject("text")?.let { item.text = textFrom(it) }
+            item.opacity = o.optDouble("opacity", 1.0).toFloat()
+            item.dash = o.optInt("dash", 0)
+            item.cap = o.optInt("cap", 0)
+            item.join = o.optInt("join", 0)
             item.groupId = o.getLong("group")
             item.visible = o.getBoolean("visible")
             item.locked = o.getBoolean("locked")
@@ -313,6 +329,9 @@ object Export {
             }
             out.add(item)
         }
-        return out
+        return Doc(
+            out, root.optDouble("width", 1000.0).toFloat(), root.optDouble("height", 1000.0).toFloat(),
+            if (root.isNull("background")) null else root.optInt("background"),
+        )
     }
 }

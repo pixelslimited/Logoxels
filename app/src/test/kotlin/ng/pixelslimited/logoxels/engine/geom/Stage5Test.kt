@@ -60,3 +60,23 @@ class Stage5Test {
         assertEquals(16, out[0].segs.size)
     }
 }
+
+class SmoothTraceTest {
+    @Test fun squareKeepsCorners() {
+        val sq = listOf(P(0.0, 0.0), P(10.0, 0.0), P(10.0, 10.0), P(0.0, 10.0))
+        val c = Trace.smoothContour(sq)
+        assertEquals(4, c.segs.size)
+        assertEquals(0.0, c.segs[0].p1.y, 1e-9)
+        assertEquals(0.0, c.segs[0].p2.y, 1e-9)
+    }
+
+    @Test fun octagonIsTangentContinuous() {
+        val oct = List(8) { i -> val a = Math.toRadians(i * 45.0); P(10 * Math.cos(a), 10 * Math.sin(a)) }
+        val c = Trace.smoothContour(oct)
+        for (i in c.segs.indices) {
+            val into = (c.segs[i].p3 - c.segs[i].p2).unit()
+            val out = (c.segs[(i + 1) % 8].p1 - c.segs[(i + 1) % 8].p0).unit()
+            assertEquals(1.0, into dot out, 1e-9)
+        }
+    }
+}

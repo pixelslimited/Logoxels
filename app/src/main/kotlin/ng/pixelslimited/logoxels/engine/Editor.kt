@@ -46,6 +46,22 @@ class Guide(val vertical: Boolean, val pos: Float)
 class Editor {
     val artboard = RectF(0f, 0f, 1000f, 1000f)
 
+    /** Artboard fill; null leaves it transparent in exports. */
+    var background by mutableStateOf<Int?>(null)
+        private set
+
+    fun doc() = Doc(items, artboard.width(), artboard.height(), background)
+
+    fun setArtboard(w: Float, h: Float) {
+        artboard.set(0f, 0f, w.coerceIn(100f, 8000f), h.coerceIn(100f, 8000f))
+        touch()
+    }
+
+    fun setBackground(c: Int?) {
+        background = c
+        touch()
+    }
+
     var items: List<Item> = emptyList()
         private set
     var version by mutableIntStateOf(0)
@@ -138,7 +154,10 @@ class Editor {
     }
 
     /** Replaces the whole document with [list] (opening a project) and clears history. */
-    fun loadProject(list: List<Item>) {
+    fun loadProject(doc: Doc) {
+        val list = doc.items
+        artboard.set(0f, 0f, doc.w, doc.h)
+        background = doc.background
         items = list
         nextId = (list.maxOfOrNull { it.id } ?: 0L) + 1
         nextGroup = (list.maxOfOrNull { it.groupId } ?: 0L) + 1
@@ -150,6 +169,7 @@ class Editor {
         cornerSel = null
         nodeSel = null
         pen = emptyList()
+        fitView()
         touch()
     }
 
@@ -160,13 +180,25 @@ class Editor {
     }
 
     // ---------- view ----------
+    private var viewW = 0f
+    private var viewH = 0f
+
     fun onViewSize(w: Float, h: Float) {
-        if (fitted || w <= 0f || h <= 0f) return
+        if (w <= 0f || h <= 0f) return
+        viewW = w
+        viewH = h
+        if (fitted) return
         fitted = true
-        val s = min(w, h) * 0.92f / artboard.width()
+        fitView()
+    }
+
+    /** Centres the whole artboard in the view. */
+    fun fitView() {
+        if (viewW <= 0f || viewH <= 0f) return
+        val s = min(viewW / artboard.width(), viewH / artboard.height()) * 0.92f
         scale = s
-        tx = (w - artboard.width() * s) / 2f
-        ty = (h - artboard.height() * s) / 2f
+        tx = (viewW - artboard.width() * s) / 2f
+        ty = (viewH - artboard.height() * s) / 2f
     }
 
     fun toDoc(p: Offset) = Offset((p.x - tx) / scale, (p.y - ty) / scale)
@@ -305,7 +337,9 @@ class Editor {
         return Offset(p.x + (ax?.first ?: 0f), p.y + (ay?.first ?: 0f))
     }
 
-    fun addGuide(vertical: Boolean) { guides = guides + Guide(vertical, 500f) }
+    fun addGuide(vertical: Boolean) {
+        guides = guides + Guide(vertical, if (vertical) artboard.centerX() else artboard.centerY())
+    }
 
     fun clearGuides() { guides = emptyList() }
 
@@ -498,7 +532,8 @@ class Editor {
             }
             Mode.GUIDE -> {
                 val g = guides.getOrNull(guideIdx)
-                if (g != null && (g.pos < -150f || g.pos > 1150f)) {
+                val limit = if (g != null && g.vertical) artboard.width() else artboard.height()
+                if (g != null && (g.pos < -150f || g.pos > limit + 150f)) {
                     guides = guides.filterIndexed { i, _ -> i != guideIdx }
                     touch()
                 }
@@ -678,6 +713,15 @@ class Editor {
         }
     }
 
+    // ---------- opacity and stroke style ----------
+    fun setOpacity(v: Float) = slide { selectedItems().forEach { it.opacity = v } }
+
+    fun setDash(v: Int) { if (selection.isNotEmpty()) change { selectedItems().forEach { it.dash = v } } }
+
+    fun setCap(v: Int) { if (selection.isNotEmpty()) change { selectedItems().forEach { it.cap = v } } }
+
+    fun setJoin(v: Int) { if (selection.isNotEmpty()) change { selectedItems().forEach { it.join = v } } }
+
     // ---------- eyedropper ----------
     /** Copies the colour of the tapped shape onto the selection (or onto new shapes when nothing is selected). */
     private fun eyedropTap() {
@@ -767,7 +811,7 @@ class Editor {
     // ---------- shape library ----------
     fun insertIcon(d: String) {
         change {
-            val item = Item(nextId++, Kind.PATH, Icons.placed(d, 500f, 500f, 300f), RectF(), nextFill, null, 0f)
+            val item = Item(nextId++, Kind.PATH, Icons.placed(d, artboard.centerX(), artboard.centerY(), min(artboard.width(), artboard.height()) * 0.3f), RectF(), nextFill, null, 0f)
             items = items + item
             selection = setOf(item.id)
             tool = Tool.SELECT
@@ -780,6 +824,8 @@ class Editor {
     var traceThreshold by mutableFloatStateOf(128f)
         private set
     var traceInvert by mutableStateOf(false)
+        private set
+    var traceSmooth by mutableStateOf(true)
         private set
     private var traceItem = 0L
 
@@ -794,6 +840,12 @@ class Editor {
         traceRun()
     }
 
+    fun tuneSmooth(v: Boolean) {
+        traceSmooth = v
+        traceRun()
+        endSlide()
+    }
+
     fun tuneInvert(v: Boolean) {
         traceInvert = v
         traceRun()
@@ -805,18 +857,20 @@ class Editor {
         val src = trace ?: return
         val thr = traceThreshold.toInt()
         val inv = traceInvert
-        val loops = Trace.loops(src.w, src.h) { x, y -> (src.gray[y * src.w + x] < thr) != inv }
-        val k = 800f / max(src.w, src.h)
-        val ox = (1000f - src.w * k) / 2f
-        val oy = (1000f - src.h * k) / 2f
-        val p = Path()
-        for (loop in loops) {
-            loop.forEachIndexed { i, pt ->
-                val x = ox + pt.x.toFloat() * k
-                val y = oy + pt.y.toFloat() * k
-                if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        val loops = Trace.loops(src.w, src.h, if (traceSmooth) 1.3 else 0.9) { x, y -> (src.gray[y * src.w + x] < thr) != inv }
+        val k = 0.8f * min(artboard.width() / src.w, artboard.height() / src.h)
+        val ox = (artboard.width() - src.w * k) / 2f
+        val oy = (artboard.height() - src.h * k) / 2f
+        val placed = loops.map { loop -> loop.map { P(ox + it.x * k, oy + it.y * k) } }
+        val p = if (traceSmooth) {
+            PathBridge.toPath(placed.map { Trace.smoothContour(it) })
+        } else {
+            Path().also { out ->
+                for (loop in placed) {
+                    loop.forEachIndexed { i, pt -> if (i == 0) out.moveTo(pt.x.toFloat(), pt.y.toFloat()) else out.lineTo(pt.x.toFloat(), pt.y.toFloat()) }
+                    out.close()
+                }
             }
-            p.close()
         }
         p.fillType = Path.FillType.EVEN_ODD
         val existing = items.firstOrNull { it.id == traceItem }
