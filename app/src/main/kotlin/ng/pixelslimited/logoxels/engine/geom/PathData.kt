@@ -21,6 +21,22 @@ object PathData {
 
     private fun pt(p: P) = "${num(p.x)} ${num(p.y)}"
 
+    /** PostScript path ops with y flipped (PostScript's origin is bottom-left) inside a page of [h] units. */
+    fun postScript(contours: List<Contour>, h: Double): String {
+        fun q(p: P) = "${num(p.x)} ${num(h - p.y)}"
+        val sb = StringBuilder()
+        for (c in contours) {
+            if (c.segs.isEmpty()) continue
+            sb.append(q(c.segs[0].p0)).append(" moveto ")
+            for (s in c.segs) {
+                if (s.line) sb.append(q(s.p3)).append(" lineto ")
+                else sb.append(q(s.p1)).append(' ').append(q(s.p2)).append(' ').append(q(s.p3)).append(" curveto ")
+            }
+            if (c.closed) sb.append("closepath ")
+        }
+        return sb.toString()
+    }
+
     fun of(contours: List<Contour>): String {
         val sb = StringBuilder()
         for (c in contours) {

@@ -78,7 +78,7 @@ import android.graphics.Paint as APaint
 import android.widget.Toast
 import java.io.OutputStream
 
-private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF }
+private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
 
 internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID }
 
@@ -114,6 +114,16 @@ fun EditorScreen(ed: Editor) {
     val pdfOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { u ->
         write(u) { Export.pdf(ed.items, it) }
     }
+    val psdOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/vnd.adobe.photoshop")) { u ->
+        write(u) { Export.psd(ed.items, it) }
+    }
+    val epsOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/postscript")) { u ->
+        write(u) { it.write(Export.eps(ed.items).toByteArray()) }
+    }
+    // Illustrator opens PDF-compatible files, so .ai is the PDF export under Illustrator's name.
+    val aiOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/illustrator")) { u ->
+        write(u) { Export.pdf(ed.items, it) }
+    }
     val projOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u ->
         write(u) { it.write(Export.projectJson(ed.items).toByteArray()) }
     }
@@ -133,6 +143,9 @@ fun EditorScreen(ed: Editor) {
                 FileOp.SVG -> svgOut.launch("logo.svg")
                 FileOp.PNG -> pngOut.launch("logo.png")
                 FileOp.PDF -> pdfOut.launch("logo.pdf")
+                FileOp.PSD -> psdOut.launch("logo.psd")
+                FileOp.EPS -> epsOut.launch("logo.eps")
+                FileOp.AI -> aiOut.launch("logo.ai")
                 FileOp.SAVE -> projOut.launch("logo.logoxels.json")
                 FileOp.OPEN -> projIn.launch(arrayOf("*/*"))
             }
@@ -407,6 +420,7 @@ private fun TopBar(ed: Editor, onFile: (FileOp) -> Unit) {
                 for ((label, op) in listOf(
                     "Open project" to FileOp.OPEN, "Save project" to FileOp.SAVE,
                     "Export SVG" to FileOp.SVG, "Export PNG" to FileOp.PNG, "Export PDF" to FileOp.PDF,
+                    "Export PSD (layers)" to FileOp.PSD, "Export EPS" to FileOp.EPS, "Export AI" to FileOp.AI,
                 )) {
                     DropdownMenuItem({ Text(label, fontSize = 14.sp) }, { menu = false; onFile(op) })
                 }

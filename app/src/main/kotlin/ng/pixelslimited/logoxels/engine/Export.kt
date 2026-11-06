@@ -117,6 +117,97 @@ object Export {
         return head + defsTag + body + "</svg>\n"
     }
 
+    /** Photoshop file: one transparent layer per visible item plus a merged image. */
+    fun psd(items: List<Item>, out: OutputStream, px: Int = 2000) {
+        val k = px / SIZE.toFloat()
+        val layers = ArrayList<PsdLayer>()
+        for (item in items) {
+            if (!item.visible) continue
+            val b = RectF(item.box())
+            val pad = if (item.stroke != null) item.strokeWidth / 2f else 0f
+            b.inset(-pad - 1f, -pad - 1f)
+            val l = maxOf(0, Math.floor((b.left * k).toDouble()).toInt())
+            val t = maxOf(0, Math.floor((b.top * k).toDouble()).toInt())
+            val r = minOf(px, Math.ceil((b.right * k).toDouble()).toInt())
+            val bt = minOf(px, Math.ceil((b.bottom * k).toDouble()).toInt())
+            if (r <= l || bt <= t) continue
+            layers.add(PsdLayer(item.label(), l, t, r - l, bt - t, pixels(listOf(item), l, t, r - l, bt - t, k)))
+        }
+        Psd.write(px, px, layers, pixels(items, 0, 0, px, px, k), out)
+    }
+
+    private fun pixels(items: List<Item>, left: Int, top: Int, w: Int, h: Int, k: Float): ByteArray {
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        try {
+            val c = Canvas(bmp)
+            c.translate(-left.toFloat(), -top.toFloat())
+            c.scale(k, k)
+            draw(c, items)
+            val ints = IntArray(w * h)
+            bmp.getPixels(ints, 0, w, 0, 0, w, h)
+            val out = ByteArray(w * h * 4)
+            for (i in ints.indices) {
+                val v = ints[i]
+                out[i * 4] = (v shr 16).toByte()
+                out[i * 4 + 1] = (v shr 8).toByte()
+                out[i * 4 + 2] = v.toByte()
+                out[i * 4 + 3] = (v ushr 24).toByte()
+            }
+            return out
+        } finally {
+            bmp.recycle()
+        }
+    }
+
+    private fun rgb(c: Int) = "${PathData.num(((c shr 16) and 0xFF) / 255.0)} ${PathData.num(((c shr 8) and 0xFF) / 255.0)} ${PathData.num((c and 0xFF) / 255.0)}"
+
+    private fun psColors(c1: Int, c2: Int) =
+        "/Function << /FunctionType 2 /Domain [0 1] /C0 [${rgb(c1)}] /C1 [${rgb(c2)}] /N 1 >>"
+
+    /** Encapsulated PostScript (level 3). Transparency is not supported by EPS, so alpha is ignored. */
+    fun eps(items: List<Item>): String {
+        val sb = StringBuilder("%!PS-Adobe-3.0 EPSF-3.0
+%%BoundingBox: 0 0 $SIZE $SIZE
+%%LanguageLevel: 3
+%%EndComments
+")
+        val h = SIZE.toDouble()
+        for (item in items) {
+            if (!item.visible) continue
+            val rp = item.renderPath()
+            val path = PathData.postScript(PathBridge.toContours(rp), h)
+            if (path.isEmpty()) continue
+            val eo = rp.fillType == Path.FillType.EVEN_ODD || rp.fillType == Path.FillType.INVERSE_EVEN_ODD
+            val g = item.gradient
+            if (item.fill != null && g != null) {
+                val v = g.geometry(item.box())
+                sb.append("gsave newpath $path ${if (eo) "eoclip" else "clip"} newpath
+")
+                if (g.kind == GKind.LINEAR) {
+                    sb.append("<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [${PathData.num(v[0].toDouble())} ${PathData.num(h - v[1])} ${PathData.num(v[2].toDouble())} ${PathData.num(h - v[3])}] ")
+                } else {
+                    val cx = PathData.num(v[0].toDouble())
+                    val cy = PathData.num(h - v[1])
+                    sb.append("<< /ShadingType 3 /ColorSpace /DeviceRGB /Coords [$cx $cy 0 $cx $cy ${PathData.num(v[2].toDouble())}] ")
+                }
+                sb.append("${psColors(g.c1, g.c2)} /Extend [true true] >> shfill grestore
+")
+            } else if (item.fill != null) {
+                sb.append("${rgb(item.fill!!)} setrgbcolor newpath $path ${if (eo) "eofill" else "fill"}
+")
+            }
+            val sc = item.stroke
+            if (sc != null && item.strokeWidth > 0f) {
+                sb.append("${rgb(sc)} setrgbcolor ${PathData.num(item.strokeWidth.toDouble())} setlinewidth 1 setlinejoin 1 setlinecap newpath $path stroke
+")
+            }
+        }
+        sb.append("showpage
+%%EOF
+")
+        return sb.toString()
+    }
+
     // ---------- project file ----------
 
     private fun rectJson(r: RectF) = JSONArray().put(r.left.toDouble()).put(r.top.toDouble()).put(r.right.toDouble()).put(r.bottom.toDouble())
