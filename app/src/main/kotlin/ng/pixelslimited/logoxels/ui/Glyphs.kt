@@ -18,7 +18,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -151,6 +151,18 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 drawLine(tint, pt(.7f, .5f), pt(.5f, .3f), strokeWidth = w * 0.1f, cap = StrokeCap.Round)
                 drawCircle(tint, radius = w * 0.06f, center = pt(.18f, .84f))
             }
+            G.Artboard -> {
+                drawRect(tint, pt(.2f, .2f), sz(.6f, .6f), style = st)
+                drawLine(tint, pt(.08f, .32f), pt(.08f, .08f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.08f, .08f), pt(.32f, .08f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.92f, .68f), pt(.92f, .92f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.92f, .92f), pt(.68f, .92f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
+            }
+            G.Sketch -> drawPath(Path().apply {
+                moveTo(.12f * w, .7f * w)
+                cubicTo(.2f * w, .2f * w, .45f * w, .2f * w, .5f * w, .5f * w)
+                cubicTo(.55f * w, .8f * w, .78f * w, .8f * w, .88f * w, .3f * w)
+            }, tint, style = st)
             G.Arrange -> {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))
                 drawRect(tint, pt(.14f, .41f), sz(.44f, .18f))

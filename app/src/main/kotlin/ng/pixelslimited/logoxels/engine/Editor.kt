@@ -16,7 +16,9 @@ import ng.pixelslimited.logoxels.engine.geom.Nodes
 import ng.pixelslimited.logoxels.engine.geom.P
 import ng.pixelslimited.logoxels.engine.geom.PathBridge
 import ng.pixelslimited.logoxels.engine.geom.PathHit
+import ng.pixelslimited.logoxels.engine.geom.Recognize
 import ng.pixelslimited.logoxels.engine.geom.Rounder
+import ng.pixelslimited.logoxels.engine.geom.Shape
 import ng.pixelslimited.logoxels.engine.geom.Trace
 import ng.pixelslimited.logoxels.engine.geom.Warp
 import java.util.Collections
@@ -27,10 +29,10 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT, EYEDROPPER }
+enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT, EYEDROPPER, SKETCH }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
-enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE }
+enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE, SKETCH }
 
 /** A pen-tool point with its two Bezier handles (equal to [p] when the point is a sharp corner). */
 class Anchor(val p: Offset, val hin: Offset, val hout: Offset)
@@ -392,6 +394,11 @@ class Editor {
         downHitId = null
         when (tool) {
             Tool.CORNERS, Tool.SCISSORS, Tool.TEXT, Tool.EYEDROPPER -> return Mode.PICK
+            Tool.SKETCH -> {
+                sketchPts.clear()
+                sketchPts.add(downDoc)
+                return Mode.SKETCH
+            }
             Tool.NODES -> return beginNodes(screen, handleRadius)
             Tool.PEN -> {
                 penClosing = pen.size >= 3 && (toScreen(pen[0].p.x, pen[0].p.y) - screen).getDistance() <= handleRadius
@@ -501,6 +508,10 @@ class Editor {
                 pen = pen.dropLast(1) + Anchor(a.p, Offset(2f * a.p.x - doc.x, 2f * a.p.y - doc.y), doc)
             }
             Mode.KNIFE -> knife = downDoc to doc
+            Mode.SKETCH -> {
+                sketchPts.add(doc)
+                touch()
+            }
             Mode.TRANSFORM -> Unit
         }
         lastDoc = doc
@@ -525,6 +536,7 @@ class Editor {
                 }
             }
             Mode.PEN -> if (penClosing && !moved) penFinish(true)
+            Mode.SKETCH -> finishSketch(moved)
             Mode.KNIFE -> {
                 val k = knife
                 knife = null
@@ -721,6 +733,56 @@ class Editor {
     fun setCap(v: Int) { if (selection.isNotEmpty()) change { selectedItems().forEach { it.cap = v } } }
 
     fun setJoin(v: Int) { if (selection.isNotEmpty()) change { selectedItems().forEach { it.join = v } } }
+
+    // ---------- sketch: recognise hand-drawn shapes ----------
+    var sketchSnap by mutableStateOf(true)
+    var sketchNote by mutableStateOf<String?>(null)
+        private set
+    private val sketchPts = ArrayList<Offset>()
+
+    fun sketchPoints(): List<Offset> = sketchPts
+
+    private fun liveItem(kind: Kind, c: P, hw: Double, hh: Double, rot: Double, sides: Int = 5, inner: Float = 0.5f): Item {
+        val r = RectF((c.x - hw).toFloat(), (c.y - hh).toFloat(), (c.x + hw).toFloat(), (c.y + hh).toFloat())
+        val item = Item(nextId++, kind, buildShape(kind, r, sides, inner), RectF(r), nextFill, null, 0f, 0f, sides, inner)
+        if (rot != 0.0) {
+            item.xf.setRotate(Math.toDegrees(rot).toFloat(), c.x.toFloat(), c.y.toFloat())
+            item.rebuild()
+        }
+        return item
+    }
+
+    private fun pathItem(path: Path, closed: Boolean) =
+        Item(nextId++, Kind.PATH, path, RectF(), if (closed) nextFill else null, if (closed) null else DARK, if (closed) 0f else 10f)
+
+    private fun itemFor(s: Shape): Item = when (s) {
+        is Shape.Line -> pathItem(Path().apply { moveTo(s.a.x.toFloat(), s.a.y.toFloat()); lineTo(s.b.x.toFloat(), s.b.y.toFloat()) }, false)
+        is Shape.Oval -> liveItem(Kind.ELLIPSE, s.c, s.rx, s.ry, s.angle)
+        is Shape.Rect -> liveItem(Kind.RECT, s.c, s.w / 2, s.h / 2, s.angle)
+        is Shape.Regular -> liveItem(Kind.POLYGON, s.c, s.r, s.r, s.angle, s.sides)
+        is Shape.Star -> liveItem(Kind.STAR, s.c, s.r, s.r, s.angle, s.points, s.inner.toFloat())
+        is Shape.Poly -> pathItem(Path().apply {
+            s.pts.forEachIndexed { i, p -> if (i == 0) moveTo(p.x.toFloat(), p.y.toFloat()) else lineTo(p.x.toFloat(), p.y.toFloat()) }
+            if (s.closed) close()
+        }, s.closed)
+        is Shape.Curve -> pathItem(PathBridge.toPath(listOf(s.contour)), s.contour.closed)
+    }
+
+    private fun finishSketch(moved: Boolean) {
+        val pts = sketchPts.map { P(it.x.toDouble(), it.y.toDouble()) }
+        sketchPts.clear()
+        val shape = if (!moved || pts.size < 6) null else if (sketchSnap) Recognize.shape(pts) else Recognize.smooth(pts)
+        if (shape == null) {
+            touch()
+            return
+        }
+        change {
+            val item = itemFor(shape)
+            items = items + item
+            selection = setOf(item.id)
+        }
+        sketchNote = shape.label()
+    }
 
     // ---------- eyedropper ----------
     /** Copies the colour of the tapped shape onto the selection (or onto new shapes when nothing is selected). */

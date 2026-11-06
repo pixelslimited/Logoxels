@@ -79,6 +79,7 @@ import ng.pixelslimited.logoxels.engine.ImageLoad
 import ng.pixelslimited.logoxels.engine.Kind
 import ng.pixelslimited.logoxels.engine.Mode
 import ng.pixelslimited.logoxels.engine.PfOp
+import ng.pixelslimited.logoxels.engine.Render
 import ng.pixelslimited.logoxels.engine.TextLayout
 import ng.pixelslimited.logoxels.engine.TextMode
 import ng.pixelslimited.logoxels.engine.geom.Warp
@@ -95,7 +96,7 @@ import java.io.OutputStream
 
 private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
 
-internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID, ICONS, TRACE }
+internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID, ICONS, TRACE, ARTBOARD }
 
 private val Ink = Color(0xFF111827)
 private val Muted = Color(0xFF9CA3AF)
@@ -123,7 +124,7 @@ private fun Autosave(ed: Editor) {
     LaunchedEffect(ed.version, restored) {
         if (!restored) return@LaunchedEffect
         delay(800)
-        val json = Export.projectJson(ed.items)
+        val json = Export.projectJson(ed.doc())
         withContext(Dispatchers.IO) {
             val tmp = File(saveFile.path + ".tmp")
             tmp.writeText(json)
@@ -149,26 +150,26 @@ fun EditorScreen(ed: Editor) {
         }
     }
     val svgOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/svg+xml")) { u ->
-        write(u) { it.write(Export.svg(ed.items).toByteArray()) }
+        write(u) { it.write(Export.svg(ed.doc()).toByteArray()) }
     }
     val pngOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { u ->
-        write(u) { Export.png(ed.items, it) }
+        write(u) { Export.png(ed.doc(), it) }
     }
     val pdfOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { u ->
-        write(u) { Export.pdf(ed.items, it) }
+        write(u) { Export.pdf(ed.doc(), it) }
     }
     val psdOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/vnd.adobe.photoshop")) { u ->
-        write(u) { Export.psd(ed.items, it) }
+        write(u) { Export.psd(ed.doc(), it) }
     }
     val epsOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/postscript")) { u ->
-        write(u) { it.write(Export.eps(ed.items).toByteArray()) }
+        write(u) { it.write(Export.eps(ed.doc()).toByteArray()) }
     }
     // Illustrator opens PDF-compatible files, so .ai is the PDF export under Illustrator's name.
     val aiOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/illustrator")) { u ->
-        write(u) { Export.pdf(ed.items, it) }
+        write(u) { Export.pdf(ed.doc(), it) }
     }
     val projOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u ->
-        write(u) { it.write(Export.projectJson(ed.items).toByteArray()) }
+        write(u) { it.write(Export.projectJson(ed.doc()).toByteArray()) }
     }
     val traceIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         if (u != null) {
@@ -212,6 +213,7 @@ fun EditorScreen(ed: Editor) {
             Tool.SCISSORS -> ScissorsPanel()
             Tool.TEXT -> TextPanel(ed)
             Tool.EYEDROPPER -> EyedropperPanel()
+            Tool.SKETCH -> SketchPanel(ed)
             else -> when (panel) {
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
@@ -219,6 +221,7 @@ fun EditorScreen(ed: Editor) {
                 Panel.LAYERS -> LayersPanel(ed)
                 Panel.GRID -> GridPanel(ed)
                 Panel.ICONS -> IconsPanel(ed)
+                Panel.ARTBOARD -> ArtboardPanel(ed)
                 Panel.TRACE -> TracePanel(ed) { traceIn.launch(arrayOf("image/*")) }
                 Panel.NONE -> Unit
             }
@@ -277,6 +280,7 @@ private fun EditorCanvas(ed: Editor) {
             nc.save()
             nc.translate(tx, ty)
             nc.scale(s, s)
+            artPaint.color = ed.background ?: android.graphics.Color.WHITE
             nc.drawRect(ed.artboard, artPaint)
             if (ed.showGrid) {
                 gridPaint.strokeWidth = 1f / s
@@ -429,6 +433,17 @@ private fun EditorCanvas(ed: Editor) {
                 }
             }
         }
+        val sketch = ed.sketchPoints()
+        if (sketch.size > 1) {
+            val route = CPath()
+            val s0 = ed.toScreen(sketch[0].x, sketch[0].y)
+            route.moveTo(s0.x, s0.y)
+            for (i in 1 until sketch.size) {
+                val q = ed.toScreen(sketch[i].x, sketch[i].y)
+                route.lineTo(q.x, q.y)
+            }
+            drawPath(route, Accent, style = Stroke(width = 5f))
+        }
         ed.knife?.let { (a, b) ->
             val sa = ed.toScreen(a.x, a.y)
             val sb = ed.toScreen(b.x, b.y)
@@ -487,6 +502,7 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Line, "Line", ed.tool == Tool.LINE) { ed.tool = Tool.LINE }
         ToolBtn(G.Pen, "Pen", ed.tool == Tool.PEN) { ed.tool = Tool.PEN }
         ToolBtn(G.Text, "Text", ed.tool == Tool.TEXT) { ed.tool = Tool.TEXT }
+        ToolBtn(G.Sketch, "Sketch", ed.tool == Tool.SKETCH) { ed.tool = Tool.SKETCH }
         ToolBtn(G.Eyedropper, "Eyedrop", ed.tool == Tool.EYEDROPPER) { ed.tool = Tool.EYEDROPPER }
         ToolBtn(G.Knife, "Knife", ed.tool == Tool.KNIFE) { ed.tool = Tool.KNIFE }
         ToolBtn(G.Nodes, "Nodes", ed.tool == Tool.NODES) { ed.tool = Tool.NODES }
@@ -500,6 +516,7 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Grid, "Grid", panel == Panel.GRID) { onPanel(Panel.GRID) }
         ToolBtn(G.Library, "Shapes", panel == Panel.ICONS) { onPanel(Panel.ICONS) }
         ToolBtn(G.Trace, "Trace", panel == Panel.TRACE) { onPanel(Panel.TRACE) }
+        ToolBtn(G.Artboard, "Canvas", panel == Panel.ARTBOARD) { onPanel(Panel.ARTBOARD) }
     }
 }
 
@@ -620,6 +637,42 @@ private fun ColorDialog(initial: Int, onDone: (Int) -> Unit, onDismiss: () -> Un
 }
 
 @Composable
+private fun ArtboardPanel(ed: Editor) {
+    ed.version
+    val w = ed.artboard.width()
+    val h = ed.artboard.height()
+    PanelBox {
+        Label("Size")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                "Square" to (1000f to 1000f), "Landscape" to (1600f to 900f), "Portrait" to (900f to 1600f),
+                "Banner" to (1500f to 500f), "App icon" to (512f to 512f),
+            ).forEach { (name, size) ->
+                FilterChip(w == size.first && h == size.second, { ed.setArtboard(size.first, size.second); ed.fitView() }, { Text(name, fontSize = 12.sp) })
+            }
+        }
+        SliderRow("Width", w, 100f..4000f, 0, ed::fitView) { ed.setArtboard(it, h) }
+        SliderRow("Height", h, 100f..4000f, 0, ed::fitView) { ed.setArtboard(w, it) }
+        Label("Background (none stays transparent in PNG, PSD and SVG)")
+        ColorRow(ed.background, true) { ed.setBackground(it) }
+    }
+}
+
+@Composable
+private fun SketchPanel(ed: Editor) {
+    ed.version
+    PanelBox {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(ed.sketchSnap, { ed.sketchSnap = !ed.sketchSnap }, { Text("Straighten shapes", fontSize = 12.sp) })
+        }
+        Label(
+            ed.sketchNote?.let { "Recognised: $it. If that is not what you meant, undo, or turn Straighten off to only smooth your line." }
+                ?: "Draw with your finger: circles, ovals, rectangles, triangles, polygons, stars, lines and outlines are recognised and tidied.",
+        )
+    }
+}
+
+@Composable
 private fun EyedropperPanel() {
     PanelBox {
         Label("Select shapes first, then tap the shape whose colour you want to copy. With nothing selected it sets the colour for new shapes.")
@@ -666,6 +719,15 @@ private fun StylePanel(ed: Editor) {
         Label("Stroke")
         ColorRow(first.stroke, true) { ed.setStroke(it) }
         SliderRow("Stroke width", first.strokeWidth, 0f..60f, 0, ed::endSlide) { ed.setStrokeWidth(it) }
+        if (first.stroke != null) {
+            Label("Stroke style")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Solid", "Dashed", "Dotted").forEachIndexed { i, n -> FilterChip(first.dash == i, { ed.setDash(i) }, { Text(n, fontSize = 12.sp) }) }
+                listOf("Round ends", "Flat ends", "Square ends").forEachIndexed { i, n -> FilterChip(first.cap == i, { ed.setCap(i) }, { Text(n, fontSize = 12.sp) }) }
+                listOf("Round joins", "Sharp joins", "Bevel joins").forEachIndexed { i, n -> FilterChip(first.join == i, { ed.setJoin(i) }, { Text(n, fontSize = 12.sp) }) }
+            }
+        }
+        SliderRow("Opacity %", first.opacity * 100f, 0f..100f, 0, ed::endSlide) { ed.setOpacity(it / 100f) }
         SliderRow("Round all corners", first.corner, 0f..300f, 0, ed::endSlide) { ed.setCorner(it) }
         if (sel.size == 1 && (first.kind == Kind.POLYGON || first.kind == Kind.STAR)) {
             SliderRow("Sides", first.sides.toFloat(), 3f..12f, 8, ed::endSlide) { ed.setSides(it.roundToInt()) }
@@ -768,6 +830,7 @@ private fun TracePanel(ed: Editor, onPick: () -> Unit) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Choose image", true, onPick)
             FilterChip(ed.traceInvert, { ed.tuneInvert(!ed.traceInvert) }, { Text("Invert", fontSize = 12.sp) })
+            FilterChip(ed.traceSmooth, { ed.tuneSmooth(!ed.traceSmooth) }, { Text("Smooth curves", fontSize = 12.sp) })
         }
         if (ed.trace == null) {
             Label("Pick a logo, sketch or photo. Its dark areas become an editable vector shape.")
