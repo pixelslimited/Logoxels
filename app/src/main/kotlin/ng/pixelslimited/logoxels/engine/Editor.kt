@@ -775,12 +775,12 @@ class Editor {
         traceRun()
     }
 
-    fun setTraceThreshold(v: Float) {
+    fun tuneThreshold(v: Float) {
         traceThreshold = v
         traceRun()
     }
 
-    fun setTraceInvert(v: Boolean) {
+    fun tuneInvert(v: Boolean) {
         traceInvert = v
         traceRun()
         endSlide()

@@ -694,12 +694,12 @@ private fun TracePanel(ed: Editor, onPick: () -> Unit) {
     PanelBox {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Choose image", true, onPick)
-            FilterChip(ed.traceInvert, { ed.setTraceInvert(!ed.traceInvert) }, { Text("Invert", fontSize = 12.sp) })
+            FilterChip(ed.traceInvert, { ed.tuneInvert(!ed.traceInvert) }, { Text("Invert", fontSize = 12.sp) })
         }
         if (ed.trace == null) {
             Label("Pick a logo, sketch or photo. Its dark areas become an editable vector shape.")
         } else {
-            SliderRow("Threshold", ed.traceThreshold, 1f..254f, 0, ed::endSlide) { ed.setTraceThreshold(it) }
+            SliderRow("Threshold", ed.traceThreshold, 1f..254f, 0, ed::endSlide) { ed.tuneThreshold(it) }
         }
     }
 }
