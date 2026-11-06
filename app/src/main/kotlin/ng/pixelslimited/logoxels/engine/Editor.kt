@@ -27,7 +27,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT }
+enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT, EYEDROPPER }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
 enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE }
@@ -357,7 +357,7 @@ class Editor {
         pushed = false
         downHitId = null
         when (tool) {
-            Tool.CORNERS, Tool.SCISSORS, Tool.TEXT -> return Mode.PICK
+            Tool.CORNERS, Tool.SCISSORS, Tool.TEXT, Tool.EYEDROPPER -> return Mode.PICK
             Tool.NODES -> return beginNodes(screen, handleRadius)
             Tool.PEN -> {
                 penClosing = pen.size >= 3 && (toScreen(pen[0].p.x, pen[0].p.y) - screen).getDistance() <= handleRadius
@@ -486,6 +486,7 @@ class Editor {
                     Tool.NODES -> nodeTap()
                     Tool.SCISSORS -> scissorsTap()
                     Tool.TEXT -> textTap()
+                    Tool.EYEDROPPER -> eyedropTap()
                     else -> pickCorner()
                 }
             }
@@ -674,6 +675,19 @@ class Editor {
             item.clearCornerOverrides()
             selection = setOf(item.id)
             nodeSel = null
+        }
+    }
+
+    // ---------- eyedropper ----------
+    /** Copies the colour of the tapped shape onto the selection (or onto new shapes when nothing is selected). */
+    private fun eyedropTap() {
+        val hit = hitTest(downDoc) ?: return
+        val c = hit.gradient?.c1 ?: hit.fill ?: hit.stroke ?: return
+        if (selection.isEmpty() || hit.id in selection) {
+            nextFill = c
+            touch()
+        } else {
+            setFill(c)
         }
     }
 

@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -42,6 +43,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,6 +87,10 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 import android.graphics.Paint as APaint
 import android.widget.Toast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.OutputStream
 
 private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
@@ -98,10 +105,38 @@ private val palette = listOf(
     0xFF14B8A6, 0xFF1E88E5, 0xFF6366F1, 0xFFA855F7, 0xFFEC4899, 0xFF78716C,
 ).map { it.toInt() }
 
+/** Keeps the document in app storage: restores it on start and saves shortly after every change. */
+@Composable
+private fun Autosave(ed: Editor) {
+    val ctx = LocalContext.current
+    val saveFile = remember { File(ctx.filesDir, "autosave.logoxels.json") }
+    var restored by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (ed.items.isEmpty() && saveFile.exists()) {
+            val text = withContext(Dispatchers.IO) { runCatching { saveFile.readText() }.getOrNull() }
+            if (text != null) {
+                runCatching { Export.readProject(text) }.onSuccess { if (ed.items.isEmpty()) ed.loadProject(it) }
+            }
+        }
+        restored = true
+    }
+    LaunchedEffect(ed.version, restored) {
+        if (!restored) return@LaunchedEffect
+        delay(800)
+        val json = Export.projectJson(ed.items)
+        withContext(Dispatchers.IO) {
+            val tmp = File(saveFile.path + ".tmp")
+            tmp.writeText(json)
+            tmp.renameTo(saveFile)
+        }
+    }
+}
+
 @Composable
 fun EditorScreen(ed: Editor) {
     var panel by remember { mutableStateOf(Panel.NONE) }
     val ctx = LocalContext.current
+    Autosave(ed)
     fun report(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
     fun write(uri: android.net.Uri?, block: (OutputStream) -> Unit) {
         if (uri == null) return
@@ -176,6 +211,7 @@ fun EditorScreen(ed: Editor) {
             Tool.NODES -> NodesPanel(ed)
             Tool.SCISSORS -> ScissorsPanel()
             Tool.TEXT -> TextPanel(ed)
+            Tool.EYEDROPPER -> EyedropperPanel()
             else -> when (panel) {
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
@@ -475,6 +511,7 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Line, "Line", ed.tool == Tool.LINE) { ed.tool = Tool.LINE }
         ToolBtn(G.Pen, "Pen", ed.tool == Tool.PEN) { ed.tool = Tool.PEN }
         ToolBtn(G.Text, "Text", ed.tool == Tool.TEXT) { ed.tool = Tool.TEXT }
+        ToolBtn(G.Eyedropper, "Eyedrop", ed.tool == Tool.EYEDROPPER) { ed.tool = Tool.EYEDROPPER }
         ToolBtn(G.Knife, "Knife", ed.tool == Tool.KNIFE) { ed.tool = Tool.KNIFE }
         ToolBtn(G.Nodes, "Nodes", ed.tool == Tool.NODES) { ed.tool = Tool.NODES }
         ToolBtn(G.Scissors, "Scissors", ed.tool == Tool.SCISSORS) { ed.tool = Tool.SCISSORS }
@@ -547,9 +584,69 @@ private fun Swatch(color: Int?, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun ColorRow(current: Int?, allowNone: Boolean, onPick: (Int?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (allowNone) Swatch(null, current == null) { onPick(null) }
+        if (current != null && current !in palette) Swatch(current, true) { open = true }
         palette.forEach { c -> Swatch(c, current == c) { onPick(c) } }
+        Box(
+            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Color(0xFFD1D5DB), CircleShape).clickable { open = true },
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                drawLine(Ink, Offset(size.width * .3f, size.height / 2f), Offset(size.width * .7f, size.height / 2f), strokeWidth = 3f)
+                drawLine(Ink, Offset(size.width / 2f, size.height * .3f), Offset(size.width / 2f, size.height * .7f), strokeWidth = 3f)
+            }
+        }
+    }
+    if (open) ColorDialog(current ?: palette[0], { onPick(it); open = false }, { open = false })
+}
+
+@Composable
+private fun ColorDialog(initial: Int, onDone: (Int) -> Unit, onDismiss: () -> Unit) {
+    val start = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(initial, it) } }
+    var h by remember { mutableFloatStateOf(start[0]) }
+    var s by remember { mutableFloatStateOf(start[1]) }
+    var v by remember { mutableFloatStateOf(start[2]) }
+    var hex by remember { mutableStateOf("%06X".format(initial and 0xFFFFFF)) }
+    val color = android.graphics.Color.HSVToColor(floatArrayOf(h, s, v))
+    fun syncHex() { hex = "%06X".format(android.graphics.Color.HSVToColor(floatArrayOf(h, s, v)) and 0xFFFFFF) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton({ onDone(color) }) { Text("Use", fontSize = 14.sp) } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel", fontSize = 14.sp) } },
+        title = { Text("Colour", fontSize = 16.sp) },
+        text = {
+            Column {
+                Box(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)))
+                Label("Hue")
+                Slider(h, { h = it; syncHex() }, valueRange = 0f..360f)
+                Label("Saturation")
+                Slider(s, { s = it; syncHex() }, valueRange = 0f..1f)
+                Label("Brightness")
+                Slider(v, { v = it; syncHex() }, valueRange = 0f..1f)
+                OutlinedTextField(
+                    hex,
+                    { t ->
+                        hex = t.uppercase().filter { it in "0123456789ABCDEF" }.take(6)
+                        if (hex.length == 6) {
+                            val hsv = FloatArray(3)
+                            android.graphics.Color.colorToHSV(0xFF000000.toInt() or hex.toInt(16), hsv)
+                            h = hsv[0]; s = hsv[1]; v = hsv[2]
+                        }
+                    },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Hex", fontSize = 12.sp) },
+                    singleLine = true,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun EyedropperPanel() {
+    PanelBox {
+        Label("Select shapes first, then tap the shape whose colour you want to copy. With nothing selected it sets the colour for new shapes.")
     }
 }
 

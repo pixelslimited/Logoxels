@@ -18,7 +18,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -144,6 +144,12 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                     moveTo(.18f * w, .76f * w); lineTo(.42f * w, .44f * w); lineTo(.56f * w, .62f * w)
                     lineTo(.66f * w, .5f * w); lineTo(.82f * w, .76f * w)
                 }, tint, style = st)
+            }
+            G.Eyedropper -> {
+                drawLine(tint, pt(.26f, .74f), pt(.6f, .4f), strokeWidth = w * 0.15f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.6f, .4f), pt(.8f, .2f), strokeWidth = w * 0.1f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.7f, .5f), pt(.5f, .3f), strokeWidth = w * 0.1f, cap = StrokeCap.Round)
+                drawCircle(tint, radius = w * 0.06f, center = pt(.18f, .84f))
             }
             G.Arrange -> {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))
