@@ -29,6 +29,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -55,12 +59,14 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ng.pixelslimited.logoxels.engine.AlignTo
 import ng.pixelslimited.logoxels.engine.Editor
+import ng.pixelslimited.logoxels.engine.Export
 import ng.pixelslimited.logoxels.engine.GKind
 import ng.pixelslimited.logoxels.engine.Kind
 import ng.pixelslimited.logoxels.engine.Mode
@@ -69,6 +75,10 @@ import ng.pixelslimited.logoxels.engine.Tool
 import kotlin.math.floor
 import kotlin.math.roundToInt
 import android.graphics.Paint as APaint
+import android.widget.Toast
+import java.io.OutputStream
+
+private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF }
 
 internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID }
 
@@ -83,8 +93,50 @@ private val palette = listOf(
 @Composable
 fun EditorScreen(ed: Editor) {
     var panel by remember { mutableStateOf(Panel.NONE) }
+    val ctx = LocalContext.current
+    fun report(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+    fun write(uri: android.net.Uri?, block: (OutputStream) -> Unit) {
+        if (uri == null) return
+        try {
+            val out = ctx.contentResolver.openOutputStream(uri) ?: error("Cannot open file")
+            out.use(block)
+            report("Saved")
+        } catch (e: Exception) {
+            report("Save failed: ${e.message}")
+        }
+    }
+    val svgOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/svg+xml")) { u ->
+        write(u) { it.write(Export.svg(ed.items).toByteArray()) }
+    }
+    val pngOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { u ->
+        write(u) { Export.png(ed.items, it) }
+    }
+    val pdfOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { u ->
+        write(u) { Export.pdf(ed.items, it) }
+    }
+    val projOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u ->
+        write(u) { it.write(Export.projectJson(ed.items).toByteArray()) }
+    }
+    val projIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
+        if (u != null) {
+            try {
+                val text = ctx.contentResolver.openInputStream(u)?.use { it.readBytes().decodeToString() } ?: error("Cannot open file")
+                ed.loadProject(Export.readProject(text))
+            } catch (e: Exception) {
+                report("Open failed: ${e.message}")
+            }
+        }
+    }
     Column(Modifier.fillMaxSize().background(Color(0xFFECEFF1)).safeDrawingPadding()) {
-        TopBar(ed)
+        TopBar(ed) { op ->
+            when (op) {
+                FileOp.SVG -> svgOut.launch("logo.svg")
+                FileOp.PNG -> pngOut.launch("logo.png")
+                FileOp.PDF -> pdfOut.launch("logo.pdf")
+                FileOp.SAVE -> projOut.launch("logo.logoxels.json")
+                FileOp.OPEN -> projIn.launch(arrayOf("*/*"))
+            }
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) { EditorCanvas(ed) }
         when (ed.tool) {
             Tool.CORNERS -> CornersPanel(ed)
@@ -342,12 +394,24 @@ private fun EditorCanvas(ed: Editor) {
 // ---------------- bars ----------------
 
 @Composable
-private fun TopBar(ed: Editor) {
+private fun TopBar(ed: Editor, onFile: (FileOp) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Logoxels", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Ink, modifier = Modifier.weight(1f).padding(start = 4.dp))
+        Box {
+            TextButton({ menu = true }) { Text("File", fontSize = 12.sp) }
+            DropdownMenu(menu, { menu = false }) {
+                for ((label, op) in listOf(
+                    "Open project" to FileOp.OPEN, "Save project" to FileOp.SAVE,
+                    "Export SVG" to FileOp.SVG, "Export PNG" to FileOp.PNG, "Export PDF" to FileOp.PDF,
+                )) {
+                    DropdownMenuItem({ Text(label, fontSize = 14.sp) }, { menu = false; onFile(op) })
+                }
+            }
+        }
         IconBtn(G.Undo, ed.canUndo) { ed.undo() }
         IconBtn(G.Redo, ed.canRedo) { ed.redo() }
         Spacer(Modifier.width(4.dp))

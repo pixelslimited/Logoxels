@@ -134,6 +134,20 @@ class Editor {
         touch()
     }
 
+    /** Replaces the whole document with [list] (opening a project) and clears history. */
+    fun loadProject(list: List<Item>) {
+        items = list
+        nextId = (list.maxOfOrNull { it.id } ?: 0L) + 1
+        nextGroup = (list.maxOfOrNull { it.groupId } ?: 0L) + 1
+        undoStack.clear()
+        redoStack.clear()
+        selection = emptySet()
+        cornerSel = null
+        nodeSel = null
+        pen = emptyList()
+        touch()
+    }
+
     private fun keepValidSelection() {
         val ids = items.map { it.id }.toSet()
         selection = selection.filter { it in ids }.toSet()

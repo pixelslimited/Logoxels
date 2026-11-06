@@ -16,19 +16,24 @@ enum class GKind { LINEAR, RADIAL }
 class Gradient(var kind: GKind, var c1: Int, var c2: Int, var angle: Float = 0f) {
     fun copy() = Gradient(kind, c1, c2, angle)
 
-    fun shader(b: RectF): Shader {
+    /** Linear: x0, y0, x1, y1. Radial: centre x, centre y, radius. */
+    fun geometry(b: RectF): FloatArray {
         val cx = b.centerX()
         val cy = b.centerY()
         val w = max(b.width(), 1f)
         val h = max(b.height(), 1f)
-        if (kind == GKind.RADIAL) {
-            return RadialGradient(cx, cy, hypot(w, h) / 2f, c1, c2, Shader.TileMode.CLAMP)
-        }
+        if (kind == GKind.RADIAL) return floatArrayOf(cx, cy, hypot(w, h) / 2f)
         val a = Math.toRadians(angle.toDouble())
         val ca = cos(a).toFloat()
         val sa = sin(a).toFloat()
         val half = (abs(w * ca) + abs(h * sa)) / 2f
-        return LinearGradient(cx - ca * half, cy - sa * half, cx + ca * half, cy + sa * half, c1, c2, Shader.TileMode.CLAMP)
+        return floatArrayOf(cx - ca * half, cy - sa * half, cx + ca * half, cy + sa * half)
+    }
+
+    fun shader(b: RectF): Shader {
+        val g = geometry(b)
+        return if (kind == GKind.RADIAL) RadialGradient(g[0], g[1], g[2], c1, c2, Shader.TileMode.CLAMP)
+        else LinearGradient(g[0], g[1], g[2], g[3], c1, c2, Shader.TileMode.CLAMP)
     }
 
     companion object {
