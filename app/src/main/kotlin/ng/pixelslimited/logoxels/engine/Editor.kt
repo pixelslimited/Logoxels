@@ -623,10 +623,30 @@ class Editor {
             }
             else -> Unit
         }
+        if (!moved && tool == Tool.SELECT && (mode == Mode.NONE || mode == Mode.MOVE)) {
+            val now = System.currentTimeMillis()
+            val twice = now - lastTapAt < 350L && (downDoc - lastTapDoc).getDistance() * scale < 30f
+            lastTapAt = if (twice) 0L else now
+            lastTapDoc = downDoc
+            if (twice) selectAllOnBoard()
+        }
         creating = null
         nodeData = null
         nodeTarget = null
         snapHints = emptyList()
+    }
+
+    private var lastTapAt = 0L
+    private var lastTapDoc = Offset.Zero
+
+    /** Double-tap with the Select tool: selects every visible, unlocked shape on the tapped artboard. */
+    private fun selectAllOnBoard() {
+        val at = boards.indexOfFirst { it.rect.contains(downDoc.x, downDoc.y) }
+        val r = boards[if (at >= 0) at else activeBoard].rect
+        val ids = items.filter { it.visible && !it.locked && RectF.intersects(r, it.box()) }.map { it.id }
+        if (ids.isEmpty()) return
+        selection = ids.toSet()
+        touch()
     }
 
     // ---------- node editing and scissors ----------
