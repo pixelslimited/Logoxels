@@ -33,7 +33,7 @@ internal val Line: Color get() = if (Pal.dark) Color(0xFF4B5563) else Color(0xFF
 @OptIn(ExperimentalTextApi::class)
 internal fun uiFont(ctx: Context): FontFamily {
     val present = runCatching { ctx.assets.list("fonts")?.contains("ui.ttf") == true }.getOrDefault(false)
-    return if (present) FontFamily(Font(ctx.assets, "fonts/ui.ttf", FontWeight.Normal)) else FontFamily.Default
+    return if (present) FontFamily(Font("fonts/ui.ttf", ctx.assets, FontWeight.Normal)) else FontFamily.Default
 }
 
 internal fun Typography.withFont(f: FontFamily) = copy(
