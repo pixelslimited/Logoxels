@@ -654,7 +654,7 @@ private fun ArtboardPanel(ed: Editor) {
         SliderRow("Width", w, 100f..4000f, 0, ed::fitView) { ed.setArtboard(it, h) }
         SliderRow("Height", h, 100f..4000f, 0, ed::fitView) { ed.setArtboard(w, it) }
         Label("Background (none stays transparent in PNG, PSD and SVG)")
-        ColorRow(ed.background, true) { ed.setBackground(it) }
+        ColorRow(ed.background, true) { ed.chooseBackground(it) }
     }
 }
 

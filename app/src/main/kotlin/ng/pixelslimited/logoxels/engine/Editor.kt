@@ -59,7 +59,7 @@ class Editor {
         touch()
     }
 
-    fun setBackground(c: Int?) {
+    fun chooseBackground(c: Int?) {
         background = c
         touch()
     }
