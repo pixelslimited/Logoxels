@@ -18,7 +18,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -85,6 +85,11 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 drawCircle(tint, radius = w * 0.26f, center = pt(.4f, .4f))
                 drawCircle(tint, radius = w * 0.26f, center = pt(.62f, .62f), style = st)
             }
+            G.Corner -> drawPath(Path().apply {
+                moveTo(.2f * w, .85f * w); lineTo(.2f * w, .5f * w)
+                cubicTo(.2f * w, .307f * w, .357f * w, .15f * w, .55f * w, .15f * w)
+                lineTo(.85f * w, .15f * w)
+            }, tint, style = st)
             G.Arrange -> {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))
                 drawRect(tint, pt(.14f, .41f), sz(.44f, .18f))

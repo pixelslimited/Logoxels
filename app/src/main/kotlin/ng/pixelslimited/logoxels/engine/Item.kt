@@ -1,10 +1,10 @@
 package ng.pixelslimited.logoxels.engine
 
-import android.graphics.CornerPathEffect
 import android.graphics.Matrix
-import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import ng.pixelslimited.logoxels.engine.geom.PathBridge
+import ng.pixelslimited.logoxels.engine.geom.Rounder
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -15,19 +15,51 @@ enum class Kind { RECT, ELLIPSE, POLYGON, STAR, PATH }
 class Item(
     val id: Long,
     var kind: Kind,
-    var path: Path,
+    path: Path,
     var bounds: RectF,
     var fill: Int?,
     var stroke: Int?,
     var strokeWidth: Float,
-    var corner: Float = 0f,
+    corner: Float = 0f,
     var sides: Int = 5,
     var inner: Float = 0.5f,
 ) {
+    private var cache: Path? = null
+
+    /** Sharp (unrounded) outline. */
+    var path: Path = path
+        set(v) {
+            field = v
+            cache = null
+        }
+
+    /** Radius applied to every corner that has no individual radius. */
+    var corner: Float = corner
+        set(v) {
+            field = v
+            cache = null
+        }
+
+    /** Individual corner radii, keyed by corner number (see [Rounder.nodes]). */
+    val cornerR = HashMap<Int, Float>()
+
     val parametric: Boolean get() = kind != Kind.PATH
+
+    fun radiusAt(i: Int): Float = cornerR[i] ?: corner
+
+    fun setCornerAt(i: Int, v: Float) {
+        cornerR[i] = v
+        cache = null
+    }
+
+    fun clearCornerOverrides() {
+        cornerR.clear()
+        cache = null
+    }
 
     fun copyWithId(newId: Long) =
         Item(newId, kind, Path(path), RectF(bounds), fill, stroke, strokeWidth, corner, sides, inner)
+            .also { it.cornerR.putAll(cornerR) }
 
     fun copy() = copyWithId(id)
 
@@ -40,6 +72,7 @@ class Item(
     fun offset(dx: Float, dy: Float) {
         path.offset(dx, dy)
         bounds.offset(dx, dy)
+        cache?.offset(dx, dy)
     }
 
     /** Re-derive this item from [orig] transformed by [m] (used for live resize). */
@@ -56,14 +89,17 @@ class Item(
         }
     }
 
-    /** Geometry with corner rounding baked in. Rounds straight-edge corners. */
+    /** Corner points of the sharp outline, for the corner-editing dots. */
+    fun cornerNodes(): List<Rounder.Node> = Rounder.nodes(PathBridge.toContours(path))
+
+    /** Outline with corner rounding applied. Ovals have no corners, so they are returned as is. */
     fun renderPath(): Path {
-        if (corner <= 0f || kind == Kind.ELLIPSE) return path
-        val out = Path()
-        Paint().apply {
-            style = Paint.Style.FILL
-            pathEffect = CornerPathEffect(corner)
-        }.getFillPath(path, out)
+        val any = corner > 0f || cornerR.values.any { it > 0f }
+        if (kind == Kind.ELLIPSE || !any) return path
+        cache?.let { return it }
+        val out = PathBridge.toPath(Rounder.round(PathBridge.toContours(path)) { radiusAt(it).toDouble() })
+        out.fillType = path.fillType
+        cache = out
         return out
     }
 }

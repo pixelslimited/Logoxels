@@ -82,11 +82,15 @@ fun EditorScreen(ed: Editor) {
     Column(Modifier.fillMaxSize().background(Color(0xFFECEFF1)).safeDrawingPadding()) {
         TopBar(ed)
         Box(Modifier.weight(1f).fillMaxWidth()) { EditorCanvas(ed) }
-        when (panel) {
-            Panel.STYLE -> StylePanel(ed)
-            Panel.COMBINE -> CombinePanel(ed)
-            Panel.ARRANGE -> ArrangePanel(ed)
-            Panel.NONE -> Unit
+        if (ed.tool == Tool.CORNERS) {
+            CornersPanel(ed)
+        } else {
+            when (panel) {
+                Panel.STYLE -> StylePanel(ed)
+                Panel.COMBINE -> CombinePanel(ed)
+                Panel.ARRANGE -> ArrangePanel(ed)
+                Panel.NONE -> Unit
+            }
         }
         BottomBar(ed, panel) { panel = if (panel == it) Panel.NONE else it }
     }
@@ -169,6 +173,17 @@ private fun EditorCanvas(ed: Editor) {
                 drawRect(Accent, o, Size(20f, 20f), style = Stroke(width = 3f))
             }
         }
+        if (ed.tool == Tool.CORNERS) {
+            val picked = ed.cornerSel
+            val orange = Color(0xFFEA580C)
+            for (n in ed.cornerNodes()) {
+                val c = ed.toScreen(n.at.x.toFloat(), n.at.y.toFloat())
+                val on = n.index == picked
+                drawCircle(Color.White, 13f, c)
+                drawCircle(if (on) orange else Accent, 13f, c, style = Stroke(width = 4f))
+                if (on) drawCircle(orange, 7f, c)
+            }
+        }
     }
 }
 
@@ -207,6 +222,7 @@ private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         ToolBtn(G.Polygon, "Polygon", ed.tool == Tool.POLYGON) { ed.tool = Tool.POLYGON }
         ToolBtn(G.Star, "Star", ed.tool == Tool.STAR) { ed.tool = Tool.STAR }
         ToolBtn(G.Line, "Line", ed.tool == Tool.LINE) { ed.tool = Tool.LINE }
+        ToolBtn(G.Corner, "Corners", ed.tool == Tool.CORNERS) { ed.tool = Tool.CORNERS }
         VerticalDivider(Modifier.height(36.dp).padding(horizontal = 4.dp))
         ToolBtn(G.Style, "Style", panel == Panel.STYLE) { onPanel(Panel.STYLE) }
         ToolBtn(G.Union, "Combine", panel == Panel.COMBINE) { onPanel(Panel.COMBINE) }
@@ -303,13 +319,37 @@ private fun StylePanel(ed: Editor) {
         Label("Stroke")
         ColorRow(first.stroke, true) { ed.setStroke(it) }
         SliderRow("Stroke width", first.strokeWidth, 0f..60f, 0, ed::endSlide) { ed.setStrokeWidth(it) }
-        SliderRow("Round corners", first.corner, 0f..300f, 0, ed::endSlide) { ed.setCorner(it) }
+        SliderRow("Round all corners", first.corner, 0f..300f, 0, ed::endSlide) { ed.setCorner(it) }
         if (sel.size == 1 && (first.kind == Kind.POLYGON || first.kind == Kind.STAR)) {
             SliderRow("Sides", first.sides.toFloat(), 3f..12f, 8, ed::endSlide) { ed.setSides(it.roundToInt()) }
         }
         if (sel.size == 1 && first.kind == Kind.STAR) {
             SliderRow("Inner size %", first.inner * 100f, 20f..90f, 0, ed::endSlide) { ed.setInner(it / 100f) }
         }
+    }
+}
+
+@Composable
+private fun CornersPanel(ed: Editor) {
+    ed.version
+    val item = ed.selectedItems().singleOrNull()
+    PanelBox {
+        if (item == null) {
+            Label("Tap a shape to select it. Its corners appear as dots.")
+            return@PanelBox
+        }
+        if (item.kind == Kind.ELLIPSE) {
+            Label("An oval has no corners. Merge it with other shapes using Combine, then round the new corners here.")
+            return@PanelBox
+        }
+        SliderRow("All corners", item.corner, 0f..300f, 0, ed::endSlide) { ed.setCorner(it) }
+        val sel = ed.cornerSel
+        if (sel == null) {
+            Label("Tap a corner dot on the canvas to round only that corner.")
+        } else {
+            SliderRow("Corner ${sel + 1}", item.radiusAt(sel), 0f..300f, 0, ed::endSlide) { ed.setCornerSelected(it) }
+        }
+        Act("Reset corners", true) { ed.resetCorners() }
     }
 }
 

@@ -11,16 +11,17 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import ng.pixelslimited.logoxels.engine.geom.Rounder
 import java.util.Collections
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE }
+enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
-enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM }
+enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK }
 
 private const val DARK = 0xFF111827.toInt()
 
@@ -38,6 +39,9 @@ class Editor {
     var multi by mutableStateOf(false)
     var lockRatio by mutableStateOf(false)
     var nextFill by mutableIntStateOf(0xFF1E88E5.toInt())
+        private set
+    /** Corner number picked with the Corners tool (see Rounder.nodes). */
+    var cornerSel by mutableStateOf<Int?>(null)
         private set
 
     var scale by mutableFloatStateOf(1f)
@@ -92,6 +96,7 @@ class Editor {
     private fun keepValidSelection() {
         val ids = items.map { it.id }.toSet()
         selection = selection.filter { it in ids }.toSet()
+        if (selection.size != 1) cornerSel = null
     }
 
     // ---------- view ----------
@@ -178,6 +183,8 @@ class Editor {
     private var origSel: List<Item> = emptyList()
     private var origBox = RectF()
     private var downHitId: Long? = null
+    private var downScreen = Offset.Zero
+    private var pickRadius = 0f
     private var wasSelected = false
 
     private fun corner(b: RectF, i: Int) = when (i) {
@@ -191,9 +198,12 @@ class Editor {
         downDoc = toDoc(screen)
         lastDoc = downDoc
         lastScreen = screen
+        downScreen = screen
+        pickRadius = handleRadius
         creating = null
         pushed = false
         downHitId = null
+        if (tool == Tool.CORNERS) return Mode.PICK
         if (tool != Tool.SELECT) return Mode.CREATE
         val box = selectionBox()
         if (box != null) {
@@ -210,7 +220,10 @@ class Editor {
         val hit = hitTest(downDoc) ?: return Mode.NONE
         downHitId = hit.id
         wasSelected = hit.id in selection
-        if (!wasSelected) selection = if (multi) selection + hit.id else setOf(hit.id)
+        if (!wasSelected) {
+            selection = if (multi) selection + hit.id else setOf(hit.id)
+            cornerSel = null
+        }
         touch()
         return Mode.MOVE
     }
@@ -227,7 +240,7 @@ class Editor {
                 touch()
             }
             Mode.RESIZE -> dragResize(doc)
-            Mode.NONE -> {
+            Mode.NONE, Mode.PICK -> {
                 tx += screen.x - lastScreen.x
                 ty += screen.y - lastScreen.y
             }
@@ -245,10 +258,30 @@ class Editor {
                 if (!moved && multi && wasSelected && id != null) { selection = selection - id; touch() }
             }
             Mode.NONE -> if (!moved && !multi && selection.isNotEmpty()) { selection = emptySet(); touch() }
+            Mode.PICK -> if (!moved) pickCorner()
             else -> Unit
         }
         creating = null
     }
+
+    private fun pickCorner() {
+        val item = selectedItems().singleOrNull()
+        if (item != null) {
+            var best = -1
+            var bestD = pickRadius
+            for (n in item.cornerNodes()) {
+                val d = (toScreen(n.at.x.toFloat(), n.at.y.toFloat()) - downScreen).getDistance()
+                if (d <= bestD) { bestD = d; best = n.index }
+            }
+            if (best >= 0) { cornerSel = best; touch(); return }
+        }
+        val hit = hitTest(downDoc)
+        selection = if (hit != null) setOf(hit.id) else emptySet()
+        cornerSel = null
+        touch()
+    }
+
+    fun cornerNodes(): List<Rounder.Node> = selectedItems().singleOrNull()?.cornerNodes() ?: emptyList()
 
     private fun kindFor(t: Tool) = when (t) {
         Tool.RECT -> Kind.RECT
@@ -361,10 +394,40 @@ class Editor {
         }
     }
 
-    fun setCorner(v: Float) = slide { selectedItems().forEach { it.corner = v } }
+    /** Every corner of the selection gets radius [v] (clears individual radii). */
+    fun setCorner(v: Float) = slide {
+        selectedItems().forEach {
+            it.corner = v
+            it.clearCornerOverrides()
+        }
+    }
+
+    /** Only the corner picked with the Corners tool. */
+    fun setCornerSelected(v: Float) = slide {
+        val s = cornerSel
+        if (s != null) selectedItems().singleOrNull()?.setCornerAt(s, v)
+    }
+
+    fun resetCorners() {
+        if (selection.isEmpty()) return
+        change {
+            selectedItems().forEach {
+                it.corner = 0f
+                it.clearCornerOverrides()
+            }
+            cornerSel = null
+        }
+    }
 
     fun setSides(n: Int) = slide {
-        selectedItems().forEach { if (it.kind == Kind.POLYGON || it.kind == Kind.STAR) { it.sides = n; it.rebuild() } }
+        cornerSel = null
+        selectedItems().forEach {
+            if (it.kind == Kind.POLYGON || it.kind == Kind.STAR) {
+                it.sides = n
+                it.clearCornerOverrides()
+                it.rebuild()
+            }
+        }
     }
 
     fun setInner(v: Float) = slide {
