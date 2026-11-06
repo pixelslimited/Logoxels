@@ -28,7 +28,7 @@ class Stage5Test {
     }
 
     @Test fun traceDiagonalTouchTerminates() {
-        val loops = Trace.loops(2, 2) { x, y -> x == y }
+        val loops = Trace.loops(2, 2, 0.0) { x, y -> x == y }
         assertTrue(loops.isNotEmpty())
     }
 
