@@ -166,11 +166,7 @@ object Export {
 
     /** Encapsulated PostScript (level 3). Transparency is not supported by EPS, so alpha is ignored. */
     fun eps(items: List<Item>): String {
-        val sb = StringBuilder("%!PS-Adobe-3.0 EPSF-3.0
-%%BoundingBox: 0 0 $SIZE $SIZE
-%%LanguageLevel: 3
-%%EndComments
-")
+        val sb = StringBuilder("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 $SIZE $SIZE\n%%LanguageLevel: 3\n%%EndComments\n")
         val h = SIZE.toDouble()
         for (item in items) {
             if (!item.visible) continue
@@ -181,8 +177,7 @@ object Export {
             val g = item.gradient
             if (item.fill != null && g != null) {
                 val v = g.geometry(item.box())
-                sb.append("gsave newpath $path ${if (eo) "eoclip" else "clip"} newpath
-")
+                sb.append("gsave newpath $path ${if (eo) "eoclip" else "clip"} newpath\n")
                 if (g.kind == GKind.LINEAR) {
                     sb.append("<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [${PathData.num(v[0].toDouble())} ${PathData.num(h - v[1])} ${PathData.num(v[2].toDouble())} ${PathData.num(h - v[3])}] ")
                 } else {
@@ -190,21 +185,16 @@ object Export {
                     val cy = PathData.num(h - v[1])
                     sb.append("<< /ShadingType 3 /ColorSpace /DeviceRGB /Coords [$cx $cy 0 $cx $cy ${PathData.num(v[2].toDouble())}] ")
                 }
-                sb.append("${psColors(g.c1, g.c2)} /Extend [true true] >> shfill grestore
-")
+                sb.append("${psColors(g.c1, g.c2)} /Extend [true true] >> shfill grestore\n")
             } else if (item.fill != null) {
-                sb.append("${rgb(item.fill!!)} setrgbcolor newpath $path ${if (eo) "eofill" else "fill"}
-")
+                sb.append("${rgb(item.fill!!)} setrgbcolor newpath $path ${if (eo) "eofill" else "fill"}\n")
             }
             val sc = item.stroke
             if (sc != null && item.strokeWidth > 0f) {
-                sb.append("${rgb(sc)} setrgbcolor ${PathData.num(item.strokeWidth.toDouble())} setlinewidth 1 setlinejoin 1 setlinecap newpath $path stroke
-")
+                sb.append("${rgb(sc)} setrgbcolor ${PathData.num(item.strokeWidth.toDouble())} setlinewidth 1 setlinejoin 1 setlinecap newpath $path stroke\n")
             }
         }
-        sb.append("showpage
-%%EOF
-")
+        sb.append("showpage\n%%EOF\n")
         return sb.toString()
     }
 
