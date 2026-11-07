@@ -18,20 +18,24 @@ android {
         versionName = "0.1.$build"
     }
 
-    // One fixed key for every build, so a new APK can install over the old one.
-    signingConfigs {
-        create("shared") {
-            storeFile = file("logoxels.keystore")
-            storePassword = "logoxels"
-            keyAlias = "logoxels"
-            keyPassword = "logoxels"
+    // Release key comes from the environment (GitHub secrets in CI); never committed.
+    val keyFile = System.getenv("LOGOXELS_KEYSTORE")
+    val keyPass = System.getenv("LOGOXELS_STORE_PASS")
+    if (keyFile != null && keyPass != null) {
+        signingConfigs {
+            create("shared") {
+                storeFile = file(keyFile)
+                storePassword = keyPass
+                keyAlias = "logoxels"
+                keyPassword = keyPass
+            }
         }
     }
 
     buildTypes {
-        debug { signingConfig = signingConfigs.getByName("shared") }
+        debug { signingConfigs.findByName("shared")?.let { signingConfig = it } }
         release {
-            signingConfig = signingConfigs.getByName("shared")
+            signingConfigs.findByName("shared")?.let { signingConfig = it }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
