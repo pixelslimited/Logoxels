@@ -45,6 +45,8 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +66,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -90,6 +93,7 @@ import android.graphics.Paint as APaint
 import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.OutputStream
@@ -246,6 +250,20 @@ private fun EditorCanvas(ed: Editor) {
     }
     val rulerBg = remember { APaint().apply { color = android.graphics.Color.WHITE } }
     val rulerInk = remember { APaint(APaint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(75, 85, 99) } }
+    LaunchedEffect(ed) {
+        snapshotFlow { ed.motionTick }.collectLatest {
+            var last = 0L
+            while (true) {
+                var running = true
+                withFrameNanos { t ->
+                    val dt = if (last == 0L) 0.016f else ((t - last) / 1e9f).coerceAtMost(0.05f)
+                    last = t
+                    running = ed.stepMotion(dt)
+                }
+                if (!running) break
+            }
+        }
+    }
     Canvas(
         Modifier
             .fillMaxSize()
@@ -255,13 +273,16 @@ private fun EditorCanvas(ed: Editor) {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     var mode = ed.beginGesture(down.position, handleR)
                     var moved = false
+                    val velocity = VelocityTracker()
                     do {
                         val event = awaitPointerEvent()
                         val pressed = event.changes.count { it.pressed }
                         if (pressed >= 2) {
                             mode = Mode.TRANSFORM
                             moved = true
-                            ed.transformView(event.calculateZoom(), event.calculatePan(), event.calculateCentroid())
+                            val centroid = event.calculateCentroid()
+                            ed.transformView(event.calculateZoom(), event.calculatePan(), centroid)
+                            velocity.addPosition(event.changes.first().uptimeMillis, centroid)
                         } else if (pressed == 1 && mode != Mode.TRANSFORM) {
                             val p = event.changes.first { it.pressed }.position
                             if (!moved && (p - down.position).getDistance() > viewConfiguration.touchSlop) moved = true
@@ -270,6 +291,10 @@ private fun EditorCanvas(ed: Editor) {
                         event.changes.forEach { if (it.positionChanged()) it.consume() }
                     } while (event.changes.any { it.pressed })
                     ed.endGesture(mode, moved)
+                    if (mode == Mode.TRANSFORM) {
+                        val v = velocity.calculateVelocity()
+                        ed.fling(v.x, v.y)
+                    }
                 }
             },
     ) {

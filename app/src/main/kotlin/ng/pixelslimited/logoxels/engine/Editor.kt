@@ -25,6 +25,7 @@ import ng.pixelslimited.logoxels.engine.geom.Warp
 import java.util.Collections
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -87,14 +88,14 @@ class Editor {
         val top = boards[activeBoard].rect.top
         boards.add(Board("Artboard ${boards.size + 1}", RectF(left, top, left + w.coerceIn(100f, 8000f), top + h.coerceIn(100f, 8000f)), null))
         activeBoard = boards.lastIndex
-        fitView()
+        fitView(animated = true)
         touch()
     }
 
     fun selectBoard(i: Int) {
         if (i !in boards.indices) return
         activeBoard = i
-        fitView()
+        fitView(animated = true)
         touch()
     }
 
@@ -112,9 +113,7 @@ class Editor {
         val u = RectF(boards[0].rect)
         for (b in boards) u.union(b.rect)
         val s = min(viewW / u.width(), viewH / u.height()) * 0.92f
-        scale = s
-        tx = (viewW - u.width() * s) / 2f - u.left * s
-        ty = (viewH - u.height() * s) / 2f - u.top * s
+        glideTo(s, (viewW - u.width() * s) / 2f - u.left * s, (viewH - u.height() * s) / 2f - u.top * s)
         touch()
     }
 
@@ -252,12 +251,60 @@ class Editor {
     }
 
     /** Centres the whole artboard in the view. */
-    fun fitView() {
+    fun fitView(animated: Boolean = false) {
         if (viewW <= 0f || viewH <= 0f) return
         val s = min(viewW / artboard.width(), viewH / artboard.height()) * 0.92f
-        scale = s
-        tx = (viewW - artboard.width() * s) / 2f - artboard.left * s
-        ty = (viewH - artboard.height() * s) / 2f - artboard.top * s
+        val x = (viewW - artboard.width() * s) / 2f - artboard.left * s
+        val y = (viewH - artboard.height() * s) / 2f - artboard.top * s
+        if (animated) glideTo(s, x, y) else { stopMotion(); scale = s; tx = x; ty = y }
+    }
+
+    // ---------- fluid view motion: glides and flings, interrupted by any touch ----------
+    private var goal: FloatArray? = null
+    private var flingX = 0f
+    private var flingY = 0f
+
+    /** Bumped whenever motion starts, so the screen's frame loop wakes up. */
+    var motionTick by mutableIntStateOf(0)
+        private set
+
+    private fun glideTo(s: Float, x: Float, y: Float) {
+        if (viewW <= 0f) { scale = s; tx = x; ty = y; return }
+        flingX = 0f; flingY = 0f
+        goal = floatArrayOf(s, x, y)
+        motionTick++
+    }
+
+    /** Starts a pan fling with the release velocity in pixels per second. */
+    fun fling(vx: Float, vy: Float) {
+        if (hypot(vx, vy) < 150f) return
+        goal = null
+        flingX = vx; flingY = vy
+        motionTick++
+    }
+
+    fun stopMotion() { goal = null; flingX = 0f; flingY = 0f }
+
+    /** Advances the glide or fling by dt seconds; false once the view has come to rest. */
+    fun stepMotion(dt: Float): Boolean {
+        val g = goal
+        if (g != null) {
+            val k = 1f - exp(-dt * 12f)
+            scale += (g[0] - scale) * k
+            tx += (g[1] - tx) * k
+            ty += (g[2] - ty) * k
+            if (abs(g[0] - scale) < 0.0005f * g[0] && abs(g[1] - tx) < 0.5f && abs(g[2] - ty) < 0.5f) {
+                scale = g[0]; tx = g[1]; ty = g[2]; goal = null
+            }
+            return goal != null
+        }
+        if (flingX == 0f && flingY == 0f) return false
+        tx += flingX * dt
+        ty += flingY * dt
+        val decay = exp(-dt * 4f)
+        flingX *= decay; flingY *= decay
+        if (hypot(flingX, flingY) < 20f) { flingX = 0f; flingY = 0f }
+        return flingX != 0f || flingY != 0f
     }
 
     fun toDoc(p: Offset) = Offset((p.x - tx) / scale, (p.y - ty) / scale)
@@ -443,6 +490,7 @@ class Editor {
     }
 
     fun beginGesture(screen: Offset, handleRadius: Float): Mode {
+        stopMotion()
         downDoc = toDoc(screen)
         lastDoc = downDoc
         lastScreen = screen
