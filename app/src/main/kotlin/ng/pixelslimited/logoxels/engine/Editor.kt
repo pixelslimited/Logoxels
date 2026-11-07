@@ -34,7 +34,7 @@ import kotlin.math.roundToInt
 enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT, EYEDROPPER, SKETCH }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
-enum class Mode { NONE, CREATE, MOVE, RESIZE, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE, SKETCH }
+enum class Mode { NONE, CREATE, MOVE, RESIZE, BOARD, SKEW_X, SKEW_Y, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE, SKETCH }
 
 /** A pen-tool point with its two Bezier handles (equal to [p] when the point is a sharp corner). */
 class Anchor(val p: Offset, val hin: Offset, val hout: Offset)
@@ -84,6 +84,7 @@ class Editor {
 
     /** Adds an artboard to the right of the existing ones and switches to it. */
     fun addBoard(w: Float, h: Float) {
+        pushUndo(true)
         val left = boards.maxOf { it.rect.right } + 150f
         val top = boards[activeBoard].rect.top
         boards.add(Board("Artboard ${boards.size + 1}", RectF(left, top, left + w.coerceIn(100f, 8000f), top + h.coerceIn(100f, 8000f)), null))
@@ -102,9 +103,52 @@ class Editor {
     /** Removes an artboard; the art on it stays in the document. */
     fun removeBoard(i: Int) {
         if (boards.size < 2 || i !in boards.indices) return
+        pushUndo(true)
+        boardMenu = null
         boards.removeAt(i)
         activeBoard = if (i < activeBoard) activeBoard - 1 else min(activeBoard, boards.lastIndex)
         fitView()
+        touch()
+    }
+
+    /** Artboard whose quick menu is open (long-press on an artboard), or null. */
+    var boardMenu by mutableStateOf<Int?>(null)
+
+    /** While on, dragging moves the active artboard together with the art on it. */
+    var boardMoveOn by mutableStateOf(false)
+
+    private fun shapesOn(r: RectF) = items.filter { val b = it.box(); r.contains(b.centerX(), b.centerY()) }
+
+    /** Long-press on an artboard with the Select tool: opens its quick menu. */
+    fun longPressBoard(screen: Offset) {
+        val d = toDoc(screen)
+        val i = boards.indexOfFirst { it.rect.contains(d.x, d.y) }
+        if (i < 0) return
+        activeBoard = i
+        boardMenu = i
+        touch()
+    }
+
+    /** Copies an artboard and everything on it to the right of the last artboard. */
+    fun duplicateBoard(i: Int) {
+        if (i !in boards.indices) return
+        pushUndo(true)
+        val src = boards[i]
+        val left = boards.maxOf { it.rect.right } + 150f
+        val dx = left - src.rect.left
+        val ids = HashMap<Long, Long>()
+        val copies = shapesOn(src.rect).map { s ->
+            s.copyWithId(nextId++).also { c ->
+                c.offset(dx, 0f)
+                if (s.groupId != 0L) c.groupId = ids.getOrPut(s.groupId) { nextGroup++ }
+            }
+        }
+        items = items + copies
+        boards.add(Board(src.name + " copy", RectF(left, src.rect.top, left + src.rect.width(), src.rect.bottom), src.bg))
+        activeBoard = boards.lastIndex
+        selection = emptySet()
+        boardMenu = null
+        fitView(animated = true)
         touch()
     }
 
@@ -125,6 +169,9 @@ class Editor {
         private set
     var tool by mutableStateOf(Tool.SELECT)
     var multi by mutableStateOf(false)
+
+    /** Quick-access bar: opened by double-tapping a shape, closed once nothing is selected. */
+    var quickOn by mutableStateOf(false)
     var lockRatio by mutableStateOf(false)
     var nextFill by mutableIntStateOf(0xFF1E88E5.toInt())
         private set
@@ -167,24 +214,40 @@ class Editor {
     private var nextId = 1L
     private var nextGroup = 1L
     private var penClosing = false
-    private val undoStack = ArrayDeque<List<Item>>()
-    private val redoStack = ArrayDeque<List<Item>>()
+    private class BoardState(val name: String, val rect: RectF, val bg: Int?)
+    /** One history step: the shapes, plus the artboards when the step changed them. */
+    private class Snap(val items: List<Item>, val boards: List<BoardState>?, val active: Int)
+    private val undoStack = ArrayDeque<Snap>()
+    private val redoStack = ArrayDeque<Snap>()
 
     private fun touch() { version++ }
 
     // ---------- history ----------
-    private fun snapshot() = items.map { it.copy() }
+    private fun snapshot(withBoards: Boolean = false) = Snap(
+        items.map { it.copy() },
+        if (withBoards) boards.map { BoardState(it.name, RectF(it.rect), it.bg) } else null,
+        activeBoard,
+    )
 
-    private fun pushUndo() {
+    private fun restore(s: Snap) {
+        items = s.items
+        s.boards?.let { list ->
+            boards.clear()
+            boards.addAll(list.map { Board(it.name, RectF(it.rect), it.bg) })
+            activeBoard = s.active.coerceIn(0, boards.lastIndex)
+        }
+    }
+
+    private fun pushUndo(withBoards: Boolean = false) {
         textEditing = 0L
-        undoStack.addLast(snapshot())
+        undoStack.addLast(snapshot(withBoards))
         if (undoStack.size > 100) undoStack.removeFirst()
         redoStack.clear()
         touch()
     }
 
-    private fun change(block: () -> Unit) {
-        pushUndo()
+    private fun change(withBoards: Boolean = false, block: () -> Unit) {
+        pushUndo(withBoards)
         block()
         touch()
     }
@@ -194,16 +257,18 @@ class Editor {
 
     fun undo() {
         if (undoStack.isEmpty()) return
-        redoStack.addLast(snapshot())
-        items = undoStack.removeLast()
+        val s = undoStack.removeLast()
+        redoStack.addLast(snapshot(s.boards != null))
+        restore(s)
         keepValidSelection()
         touch()
     }
 
     fun redo() {
         if (redoStack.isEmpty()) return
-        undoStack.addLast(snapshot())
-        items = redoStack.removeLast()
+        val s = redoStack.removeLast()
+        undoStack.addLast(snapshot(s.boards != null))
+        restore(s)
         keepValidSelection()
         touch()
     }
@@ -214,6 +279,9 @@ class Editor {
         boards.clear()
         if (doc.boards.isEmpty()) boards.add(Board("Artboard 1", RectF(0f, 0f, doc.w, doc.h), doc.background)) else boards.addAll(doc.boards)
         activeBoard = doc.active.coerceIn(0, boards.lastIndex)
+        boardMenu = null
+        boardMoveOn = false
+        quickOn = false
         dupIds = emptySet()
         dupMake = null
         items = list
@@ -460,6 +528,7 @@ class Editor {
     private var handle = -1
     private var origSel: List<Item> = emptyList()
     private var origBox = RectF()
+    private var moveBoardRect = RectF()
     private var downHitId: Long? = null
     private var downScreen = Offset.Zero
     private var downGroup: Set<Long> = emptySet()
@@ -489,6 +558,12 @@ class Editor {
         return Offset(top.x, top.y - ROT_OFFSET)
     }
 
+    /** Screen positions of the skew handles: middle of the bottom edge (horizontal skew) and of the right edge (vertical skew). */
+    fun skewHandles(): Pair<Offset, Offset>? {
+        val b = selectionBox() ?: return null
+        return toScreen(b.centerX(), b.bottom) to toScreen(b.right, b.centerY())
+    }
+
     fun beginGesture(screen: Offset, handleRadius: Float): Mode {
         stopMotion()
         downDoc = toDoc(screen)
@@ -499,6 +574,12 @@ class Editor {
         creating = null
         pushed = false
         downHitId = null
+        if (boardMoveOn) {
+            moveBoardRect = RectF(boards[activeBoard].rect)
+            origSel = shapesOn(moveBoardRect).map { it.copy() }
+            return Mode.BOARD
+        }
+        boardMenu = null
         boards.indexOfFirst { it.rect.contains(downDoc.x, downDoc.y) }.let { if (it >= 0 && it != activeBoard) activeBoard = it }
         when (tool) {
             Tool.CORNERS, Tool.SCISSORS, Tool.TEXT, Tool.EYEDROPPER -> return Mode.PICK
@@ -543,6 +624,15 @@ class Editor {
                 rotCenter = Offset(box.centerX(), box.centerY())
                 rotStart = atan2(downDoc.y - rotCenter.y, downDoc.x - rotCenter.x)
                 return Mode.ROTATE
+            }
+            skewHandles()?.let { (sx, sy) ->
+                val hx = (sx - screen).getDistance() <= handleRadius
+                val hy = (sy - screen).getDistance() <= handleRadius
+                if (hx || hy) {
+                    origSel = selectedItems().map { it.copy() }
+                    origBox = RectF(box)
+                    return if (hx) Mode.SKEW_X else Mode.SKEW_Y
+                }
             }
         }
         for ((gi, g) in guides.withIndex()) {
@@ -601,6 +691,29 @@ class Editor {
                 for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
                 val rd = deg
                 noteTransform { b -> Matrix().apply { setRotate(rd, b.centerX(), b.centerY()) } }
+                touch()
+            }
+            Mode.BOARD -> {
+                if (!pushed) { pushUndo(true); pushed = true }
+                val dx = doc.x - downDoc.x
+                val dy = doc.y - downDoc.y
+                val m = Matrix().apply { setTranslate(dx, dy) }
+                for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
+                boards[activeBoard].rect.set(moveBoardRect.left + dx, moveBoardRect.top + dy, moveBoardRect.right + dx, moveBoardRect.bottom + dy)
+                touch()
+            }
+            Mode.SKEW_X, Mode.SKEW_Y -> {
+                if (!pushed) { pushUndo(); pushed = true }
+                val horizontal = mode == Mode.SKEW_X
+                val b = origBox
+                var k = if (horizontal) 2f * (doc.x - downDoc.x) / b.height().coerceAtLeast(1f)
+                else 2f * (doc.y - downDoc.y) / b.width().coerceAtLeast(1f)
+                k = k.coerceIn(-4f, 4f)
+                if (abs(k) < 0.03f) k = 0f
+                fun skew(cx: Float, cy: Float) = Matrix().apply { if (horizontal) setSkew(k, 0f, cx, cy) else setSkew(0f, k, cx, cy) }
+                val m = skew(b.centerX(), b.centerY())
+                for (o in origSel) items.firstOrNull { it.id == o.id }?.applyFrom(o, m)
+                noteTransform { r -> skew(r.centerX(), r.centerY()) }
                 touch()
             }
             Mode.GUIDE -> {
@@ -676,7 +789,10 @@ class Editor {
             val twice = now - lastTapAt < 350L && (downDoc - lastTapDoc).getDistance() * scale < 30f
             lastTapAt = if (twice) 0L else now
             lastTapDoc = downDoc
-            if (twice) selectAllOnBoard()
+            if (twice) {
+                if (downHitId == null) selectAllOnBoard()
+                if (selection.isNotEmpty()) quickOn = true
+            }
         }
         creating = null
         nodeData = null
@@ -1450,6 +1566,8 @@ class Editor {
                     dead.add(t.id)
                     continue
                 }
+                t.clipSrc = ClipSource(t.copy(), mask.copy())
+                t.clipDelta.reset()
                 t.flatten()
                 t.path = r
                 t.corner = 0f
@@ -1458,6 +1576,36 @@ class Editor {
             items = items.filter { it.id !in dead }
             selection = targets.map { it.id }.filter { it !in dead }.toSet()
             cornerSel = null
+        }
+    }
+
+    val canUnclip: Boolean get() { version; return selectedItems().any { it.clipSrc != null } }
+
+    /** Releases clipped shapes: each gets its full outline back and the clipping shape returns on top. */
+    fun unclip() {
+        val sel = selectedItems().filter { it.clipSrc != null }
+        if (sel.isEmpty()) return
+        change {
+            val masks = ArrayList<Item>()
+            val seen = HashSet<Long>()
+            for (t in sel) {
+                val src = t.clipSrc ?: continue
+                val delta = Matrix(t.clipDelta)
+                val g = src.orig.copy()
+                g.applyFrom(src.orig, delta)
+                t.kind = g.kind; t.path = g.path; t.bounds = g.bounds; t.xf.set(g.xf); t.text = g.text
+                t.sides = g.sides; t.inner = g.inner; t.corner = g.corner
+                t.cornerR.clear(); t.cornerR.putAll(g.cornerR)
+                t.clipSrc = g.clipSrc; t.clipDelta.set(g.clipDelta)
+                if (seen.add(src.mask.id) && items.none { it.id == src.mask.id }) {
+                    val m = src.mask.copy()
+                    m.applyFrom(src.mask, delta)
+                    masks.add(m)
+                }
+            }
+            val at = items.indexOfLast { i -> sel.any { it.id == i.id } } + 1
+            items = items.toMutableList().also { it.addAll(at, masks) }
+            selection = selection + masks.map { it.id }
         }
     }
 
@@ -1485,7 +1633,7 @@ class Editor {
 
     private fun boxOf(u: List<Item>) = RectF(u[0].box()).also { r -> for (i in u) r.union(i.box()) }
 
-    private fun selectedUnits() = layerUnits().filter { u -> u.any { it.id in selection } }
+    fun selectedUnits() = layerUnits().filter { u -> u.any { it.id in selection } }
 
     fun toggleVisible(item: Item) = change {
         val ids = groupIds(item)

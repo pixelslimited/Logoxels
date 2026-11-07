@@ -12,14 +12,19 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch, Theme }
+enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch, Theme,
+    AlignL, AlignC, AlignR, AlignT, AlignM, AlignB, RotL, RotR, FlipH, FlipV, ToFront, Forward, Backward, ToBack,
+    Group, Ungroup, Clip, Unclip, DistH, DistV, Dup, SelAll, Trash, Move, Check }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -43,6 +48,26 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
         val st = Stroke(width = w * 0.09f, cap = StrokeCap.Round, join = StrokeJoin.Round)
         fun pt(x: Float, y: Float) = Offset(x * w, y * w)
         fun sz(x: Float, y: Float) = Size(x * w, y * w)
+        fun bar(x: Float, y: Float, a: Float, b: Float) = drawRect(tint, pt(x, y), sz(a, b))
+        fun box(x: Float, y: Float, a: Float, b: Float) = drawRect(tint, pt(x, y), sz(a, b), style = st)
+        fun ln(x1: Float, y1: Float, x2: Float, y2: Float, k: Float = .07f) =
+            drawLine(tint, pt(x1, y1), pt(x2, y2), strokeWidth = w * k, cap = StrokeCap.Round)
+        fun tri(a: Offset, b: Offset, c: Offset, fill: Boolean) = drawPath(
+            Path().apply { moveTo(a.x, a.y); lineTo(b.x, b.y); lineTo(c.x, c.y); close() },
+            tint, style = if (fill) Fill else st,
+        )
+        fun turn(cw: Boolean) {
+            val r = .3f
+            val sweep = if (cw) 250.0 else -250.0
+            drawArc(tint, -120f, sweep.toFloat(), false, pt(.5f - r, .5f - r), sz(2 * r, 2 * r), style = st)
+            val a1 = Math.toRadians(-120.0 + sweep)
+            val ex = .5f + r * cos(a1).toFloat()
+            val ey = .5f + r * sin(a1).toFloat()
+            val d = if (cw) 1f else -1f
+            val tx = -sin(a1).toFloat() * d
+            val ty = cos(a1).toFloat() * d
+            tri(pt(ex + tx * .14f, ey + ty * .14f), pt(ex + ty * .1f, ey - tx * .1f), pt(ex - ty * .1f, ey + tx * .1f), true)
+        }
         when (g) {
             G.Select -> drawPath(Path().apply {
                 moveTo(.28f * w, .12f * w); lineTo(.28f * w, .84f * w); lineTo(.46f * w, .66f * w)
@@ -168,6 +193,54 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 drawCircle(tint, radius = w * 0.34f, center = pt(.5f, .5f), style = st)
                 drawPath(Path().apply { arcTo(Rect(.16f * w, .16f * w, .84f * w, .84f * w), -90f, 180f, true); close() }, tint)
             }
+            G.AlignL -> { ln(.14f, .12f, .14f, .88f); bar(.24f, .26f, .6f, .16f); bar(.24f, .58f, .36f, .16f) }
+            G.AlignC -> { ln(.5f, .12f, .5f, .88f); bar(.2f, .26f, .6f, .16f); bar(.32f, .58f, .36f, .16f) }
+            G.AlignR -> { ln(.86f, .12f, .86f, .88f); bar(.16f, .26f, .6f, .16f); bar(.4f, .58f, .36f, .16f) }
+            G.AlignT -> { ln(.12f, .14f, .88f, .14f); bar(.26f, .24f, .16f, .6f); bar(.58f, .24f, .16f, .36f) }
+            G.AlignM -> { ln(.12f, .5f, .88f, .5f); bar(.26f, .2f, .16f, .6f); bar(.58f, .32f, .16f, .36f) }
+            G.AlignB -> { ln(.12f, .86f, .88f, .86f); bar(.26f, .16f, .16f, .6f); bar(.58f, .4f, .16f, .36f) }
+            G.RotL -> turn(false)
+            G.RotR -> turn(true)
+            G.FlipH -> {
+                drawLine(tint, pt(.5f, .1f), pt(.5f, .9f), strokeWidth = w * .06f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(w * .1f, w * .08f)))
+                tri(pt(.4f, .22f), pt(.4f, .78f), pt(.08f, .78f), false)
+                tri(pt(.6f, .22f), pt(.6f, .78f), pt(.92f, .78f), true)
+            }
+            G.FlipV -> {
+                drawLine(tint, pt(.1f, .5f), pt(.9f, .5f), strokeWidth = w * .06f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(w * .1f, w * .08f)))
+                tri(pt(.22f, .4f), pt(.78f, .4f), pt(.78f, .08f), false)
+                tri(pt(.22f, .6f), pt(.78f, .6f), pt(.78f, .92f), true)
+            }
+            G.ToFront -> { box(.12f, .12f, .5f, .5f); bar(.38f, .38f, .5f, .5f) }
+            G.ToBack -> { bar(.12f, .12f, .5f, .5f); box(.38f, .38f, .5f, .5f) }
+            G.Forward -> { ln(.5f, .84f, .5f, .2f); ln(.5f, .2f, .3f, .4f); ln(.5f, .2f, .7f, .4f); bar(.2f, .86f, .6f, .08f) }
+            G.Backward -> { ln(.5f, .16f, .5f, .8f); ln(.5f, .8f, .3f, .6f); ln(.5f, .8f, .7f, .6f); bar(.2f, .06f, .6f, .08f) }
+            G.Group -> { box(.1f, .1f, .8f, .8f); bar(.24f, .24f, .22f, .22f); bar(.54f, .54f, .22f, .22f) }
+            G.Ungroup -> { box(.1f, .1f, .36f, .36f); box(.54f, .54f, .36f, .36f) }
+            G.Clip -> {
+                val oval = Path().apply { addOval(Rect(.4f * w, .4f * w, .9f * w, .9f * w)) }
+                clipPath(oval) { drawRect(tint, pt(.1f, .1f), sz(.55f, .55f)) }
+                box(.1f, .1f, .55f, .55f)
+                drawOval(tint, pt(.4f, .4f), sz(.5f, .5f), style = st)
+            }
+            G.Unclip -> { box(.1f, .1f, .55f, .55f); drawOval(tint, pt(.4f, .4f), sz(.5f, .5f), style = st) }
+            G.DistH -> { ln(.1f, .12f, .1f, .88f); ln(.9f, .12f, .9f, .88f); bar(.4f, .28f, .2f, .44f) }
+            G.DistV -> { ln(.12f, .1f, .88f, .1f); ln(.12f, .9f, .88f, .9f); bar(.28f, .4f, .44f, .2f) }
+            G.Dup -> { box(.14f, .14f, .5f, .5f); box(.36f, .36f, .5f, .5f) }
+            G.SelAll -> {
+                drawRect(tint, pt(.14f, .14f), sz(.72f, .72f), style = Stroke(width = w * .08f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(w * .14f, w * .1f))))
+                bar(.38f, .38f, .24f, .24f)
+            }
+            G.Trash -> {
+                ln(.18f, .27f, .82f, .27f); ln(.4f, .27f, .4f, .16f); ln(.4f, .16f, .6f, .16f); ln(.6f, .16f, .6f, .27f)
+                drawPath(Path().apply { moveTo(.28f * w, .36f * w); lineTo(.34f * w, .86f * w); lineTo(.66f * w, .86f * w); lineTo(.72f * w, .36f * w) }, tint, style = st)
+            }
+            G.Move -> {
+                ln(.5f, .1f, .5f, .9f); ln(.1f, .5f, .9f, .5f)
+                tri(pt(.5f, .06f), pt(.38f, .2f), pt(.62f, .2f), true); tri(pt(.5f, .94f), pt(.38f, .8f), pt(.62f, .8f), true)
+                tri(pt(.06f, .5f), pt(.2f, .38f), pt(.2f, .62f), true); tri(pt(.94f, .5f), pt(.8f, .38f), pt(.8f, .62f), true)
+            }
+            G.Check -> { ln(.2f, .52f, .42f, .74f, .1f); ln(.42f, .74f, .82f, .26f, .1f) }
             G.Arrange -> {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))
                 drawRect(tint, pt(.14f, .41f), sz(.44f, .18f))

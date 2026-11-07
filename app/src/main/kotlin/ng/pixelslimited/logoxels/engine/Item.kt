@@ -11,6 +11,9 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
+/** What a clipped shape looked like before clipping, so it can be released again. */
+class ClipSource(val orig: Item, val mask: Item)
+
 enum class Kind { RECT, ELLIPSE, POLYGON, STAR, PATH, TEXT }
 
 /** One vector object. Geometry lives in artboard units. */
@@ -69,6 +72,10 @@ class Item(
     /** Rotation, flip and resize of a live shape: the outline is [bounds] built as a shape, then moved by this. */
     val xf = Matrix()
 
+    /** Set while this shape is trimmed by a clip; [clipDelta] is every move and resize since. */
+    var clipSrc: ClipSource? = null
+    val clipDelta = Matrix()
+
     fun radiusAt(i: Int): Float = cornerR[i] ?: corner
 
     fun setCornerAt(i: Int, v: Float) {
@@ -95,6 +102,8 @@ class Item(
                 it.cap = cap
                 it.join = join
                 it.text = text?.copy()
+                it.clipSrc = clipSrc
+                it.clipDelta.set(clipDelta)
             }
 
     fun copy() = copyWithId(id)
@@ -149,6 +158,7 @@ class Item(
     fun offset(dx: Float, dy: Float) {
         path.offset(dx, dy)
         if (parametric) xf.postTranslate(dx, dy)
+        if (clipSrc != null) clipDelta.postTranslate(dx, dy)
         cache?.offset(dx, dy)
     }
 
@@ -163,6 +173,10 @@ class Item(
             val p = Path(orig.path)
             p.transform(m)
             path = p
+        }
+        if (clipSrc != null) {
+            clipDelta.set(orig.clipDelta)
+            clipDelta.postConcat(m)
         }
     }
 

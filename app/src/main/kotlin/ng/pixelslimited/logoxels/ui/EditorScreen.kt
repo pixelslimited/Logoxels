@@ -1,6 +1,11 @@
 package ng.pixelslimited.logoxels.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -208,7 +214,11 @@ fun EditorScreen(ed: Editor) {
                 FileOp.OPEN -> projIn.launch(arrayOf("*/*"))
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) { EditorCanvas(ed) }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            EditorCanvas(ed)
+            QuickBar(ed, Modifier.align(Alignment.BottomCenter))
+            BoardBar(ed, Modifier.align(Alignment.TopCenter))
+        }
         when (ed.tool) {
             Tool.CORNERS -> CornersPanel(ed)
             Tool.PEN -> PenPanel(ed)
@@ -274,6 +284,27 @@ private fun EditorCanvas(ed: Editor) {
                     var mode = ed.beginGesture(down.position, handleR)
                     var moved = false
                     val velocity = VelocityTracker()
+                    if (mode == Mode.NONE && ed.tool == Tool.SELECT) {
+                        var held = true
+                        val timedOut = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            while (held) {
+                                val e = awaitPointerEvent()
+                                val c = e.changes.firstOrNull()
+                                if (c == null || !c.pressed || e.changes.size > 1 ||
+                                    (c.position - down.position).getDistance() > viewConfiguration.touchSlop
+                                ) held = false
+                            }
+                        } == null
+                        if (timedOut) {
+                            ed.longPressBoard(down.position)
+                            do { val e = awaitPointerEvent(); e.changes.forEach { it.consume() } } while (e.changes.any { it.pressed })
+                            return@awaitEachGesture
+                        }
+                        if (!held && !currentEvent.changes.any { it.pressed }) {
+                            ed.endGesture(mode, false)
+                            return@awaitEachGesture
+                        }
+                    }
                     do {
                         val event = awaitPointerEvent()
                         val pressed = event.changes.count { it.pressed }
@@ -355,6 +386,13 @@ private fun EditorCanvas(ed: Editor) {
                 drawCircle(Color.White, 13f, rh)
                 drawCircle(Accent, 13f, rh, style = Stroke(width = 3f))
                 drawCircle(Accent, 4f, rh)
+                ed.skewHandles()?.let { (a, b) ->
+                    for (p in listOf(a, b)) {
+                        val d = CPath().apply { moveTo(p.x, p.y - 13f); lineTo(p.x + 13f, p.y); lineTo(p.x, p.y + 13f); lineTo(p.x - 13f, p.y); close() }
+                        drawPath(d, Color.White)
+                        drawPath(d, Accent, style = Stroke(width = 3f))
+                    }
+                }
             }
         }
         if (ed.tool == Tool.NODES) {
@@ -1112,6 +1150,133 @@ private fun ArrangePanel(ed: Editor) {
             Act("Duplicate", n > 0) { ed.duplicateSelected() }
             Act("Select all", true) { ed.selectAll() }
             Act("Delete", n > 0) { ed.deleteSelected() }
+        }
+    }
+}
+
+
+// ---------------- quick access ----------------
+
+@Composable
+private fun QPill(content: @Composable () -> Unit) {
+    Row(
+        Modifier
+            .shadow(8.dp, RoundedCornerShape(28.dp))
+            .clip(RoundedCornerShape(28.dp))
+            .background(Bar)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) { content() }
+}
+
+@Composable
+private fun QBtn(g: G, enabled: Boolean = true, active: Boolean = false, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (active) SelBg else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Glyph(g, if (enabled) Ink else Muted) }
+}
+
+@Composable
+private fun QDivider() {
+    Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(24.dp).background(Line))
+}
+
+/** Shown after a double-tap on a shape; stays while anything is selected. */
+@Composable
+private fun QuickBar(ed: Editor, modifier: Modifier) {
+    ed.version
+    val n = ed.selection.size
+    val show = ed.quickOn && n > 0 && ed.tool == Tool.SELECT
+    LaunchedEffect(n == 0) { if (n == 0) ed.quickOn = false }
+    var open by remember { mutableStateOf("") }
+    LaunchedEffect(show) { if (!show) open = "" }
+    val units = if (show) ed.selectedUnits().size else 0
+    fun pick(k: String) { open = if (open == k) "" else k }
+    AnimatedVisibility(
+        show, modifier.padding(8.dp),
+        enter = fadeIn() + slideInVertically { it / 2 },
+        exit = fadeOut() + slideOutVertically { it / 2 },
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (open.isNotEmpty()) QPill {
+                when (open) {
+                    "align" -> {
+                        QBtn(G.AlignL) { ed.align(AlignTo.LEFT) }
+                        QBtn(G.AlignC) { ed.align(AlignTo.CENTER) }
+                        QBtn(G.AlignR) { ed.align(AlignTo.RIGHT) }
+                        QBtn(G.AlignT) { ed.align(AlignTo.TOP) }
+                        QBtn(G.AlignM) { ed.align(AlignTo.MIDDLE) }
+                        QBtn(G.AlignB) { ed.align(AlignTo.BOTTOM) }
+                    }
+                    "rotate" -> {
+                        QBtn(G.RotL) { ed.rotate90(false) }
+                        QBtn(G.RotR) { ed.rotate90(true) }
+                        QBtn(G.FlipV) { ed.flip(false) }
+                        QBtn(G.FlipH) { ed.flip(true) }
+                    }
+                    "order" -> {
+                        QBtn(G.ToFront) { ed.reorder(front = true, toEnd = true) }
+                        QBtn(G.Forward) { ed.reorder(front = true, toEnd = false) }
+                        QBtn(G.Backward) { ed.reorder(front = false, toEnd = false) }
+                        QBtn(G.ToBack) { ed.reorder(front = false, toEnd = true) }
+                    }
+                    "group" -> {
+                        QBtn(G.Group) { ed.group() }
+                        QBtn(G.Ungroup, ed.selectedItems().any { it.groupId != 0L }) { ed.ungroup() }
+                    }
+                    "clip" -> {
+                        QBtn(G.Clip) { ed.clipToTop() }
+                        QBtn(G.Unclip, ed.canUnclip) { ed.unclip() }
+                    }
+                    "dist" -> {
+                        QBtn(G.DistH) { ed.distribute(true) }
+                        QBtn(G.DistV) { ed.distribute(false) }
+                    }
+                }
+            }
+            QPill {
+                QBtn(G.AlignL, active = open == "align") { pick("align") }
+                QBtn(G.RotR, active = open == "rotate") { pick("rotate") }
+                QBtn(G.Arrange, active = open == "order") { pick("order") }
+                if (n >= 2) {
+                    QBtn(G.Group, active = open == "group") { pick("group") }
+                    QBtn(G.Clip, active = open == "clip") { pick("clip") }
+                }
+                if (units >= 3) QBtn(G.DistH, active = open == "dist") { pick("dist") }
+                QDivider()
+                QBtn(G.Dup) { ed.duplicateSelected() }
+                QBtn(G.SelAll) { ed.selectAll() }
+                QBtn(G.Trash) { ed.deleteSelected() }
+            }
+        }
+    }
+}
+
+/** Shown after a long-press on an artboard. */
+@Composable
+private fun BoardBar(ed: Editor, modifier: Modifier) {
+    ed.version
+    val i = ed.boardMenu
+    val moving = ed.boardMoveOn
+    val show = (i != null && i in ed.boards.indices) || moving
+    val name = if (show) ed.boards.getOrNull(ed.activeBoard)?.name.orEmpty() else ""
+    AnimatedVisibility(show, modifier.padding(8.dp), enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut() + slideOutVertically { -it / 2 }) {
+        QPill {
+            Text(name, fontSize = 12.sp, color = Ink, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp))
+            if (moving) {
+                Text("Drag to move", fontSize = 12.sp, color = Muted, modifier = Modifier.padding(end = 6.dp))
+                QBtn(G.Check) { ed.boardMoveOn = false }
+            } else {
+                QBtn(G.Move) { ed.boardMenu = null; ed.boardMoveOn = true }
+                QBtn(G.Dup) { ed.duplicateBoard(ed.activeBoard) }
+                QBtn(G.Trash, ed.boards.size > 1) { ed.removeBoard(ed.activeBoard) }
+            }
         }
     }
 }
