@@ -32,7 +32,10 @@ jobs:
           if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ]; then
             echo "::error::Add secrets LOGOXELS_KEYSTORE_B64 and LOGOXELS_STORE_PASS (Settings > Secrets and variables > Actions)"; exit 1
           fi
-          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          KS_PASS=$(printf %s "$KS_PASS" | tr -d '[:space:]')
+          printf %s "$KS_B64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "password length: ${#KS_PASS}, keystore bytes: $(stat -c %s "$RUNNER_TEMP/release.keystore")"
+          keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "$KS_PASS" > /dev/null || { echo "::error::Keystore will not open: the secrets do not match the file I sent (expect password length 24, keystore about 4200 bytes)"; exit 1; }
           echo "LOGOXELS_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
           echo "LOGOXELS_STORE_PASS=$KS_PASS" >> "$GITHUB_ENV"
       - run: gradle testDebugUnitTest assembleDebug --no-daemon -PbuildNumber=${{ github.run_number }}
