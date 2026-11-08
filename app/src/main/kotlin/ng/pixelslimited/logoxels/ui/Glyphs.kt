@@ -25,7 +25,7 @@ import kotlin.math.sin
 enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch, Theme,
     AlignL, AlignC, AlignR, AlignT, AlignM, AlignB, RotL, RotR, FlipH, FlipV, ToFront, Forward, Backward, ToBack,
     Group, Ungroup, Clip, Unclip, DistH, DistV, Dup, SelAll, Trash, Move, Check,
-    Eye, EyeOff, Lock, Unlock, Grip, Close }
+    Eye, EyeOff, Lock, Unlock, Grip, Close, Copy, Paste, Zoom }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -269,6 +269,15 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                         cubicTo(.34f * w, .06f * w, .66f * w, .06f * w, .66f * w, .24f * w)
                     }
                 }, tint, style = st)
+            }
+            G.Zoom -> {
+                drawCircle(tint, w * .24f, pt(.44f, .44f), style = st)
+                ln(.62f, .62f, .84f, .84f, .1f)
+            }
+            G.Copy -> { box(.14f, .14f, .5f, .5f); bar(.36f, .36f, .5f, .5f) }
+            G.Paste -> {
+                box(.2f, .24f, .6f, .62f); bar(.38f, .14f, .24f, .16f)
+                ln(.32f, .5f, .68f, .5f); ln(.32f, .66f, .68f, .66f)
             }
             G.Close -> { ln(.26f, .26f, .74f, .74f, .1f); ln(.74f, .26f, .26f, .74f, .1f) }
             G.Grip -> {

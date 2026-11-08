@@ -161,6 +161,17 @@ class Editor {
         touch()
     }
 
+    /** Zooms in so the selection fills the view. */
+    fun fitSelection() {
+        val b = selectionBox() ?: return
+        if (viewW <= 0f || viewH <= 0f) return
+        val w = max(b.width(), 1f)
+        val h = max(b.height(), 1f)
+        val sc = (min(viewW / w, viewH / h) * 0.8f).coerceIn(0.1f, 20f)
+        glideTo(sc, (viewW - w * sc) / 2f - b.left * sc, (viewH - h * sc) / 2f - b.top * sc)
+        touch()
+    }
+
     var items: List<Item> = emptyList()
         private set
     var version by mutableIntStateOf(0)
@@ -1137,6 +1148,164 @@ class Editor {
             selection = setOf(item.id)
             tool = Tool.SELECT
         }
+    }
+
+    // ---------- numeric transform ----------
+    /** Position and size of the selection in artboard units, measured from the active artboard's top-left. */
+    fun selectionRect(): RectF? = selectionBox()?.also { it.offset(-artboard.left, -artboard.top) }
+
+    /** Moves and resizes the selection to the given box (artboard units); a null part stays as it is. */
+    fun setSelectionRect(x: Float?, y: Float?, w: Float?, h: Float?) {
+        val box = selectionBox() ?: return
+        val bw = max(box.width(), 0.01f)
+        val bh = max(box.height(), 0.01f)
+        var nw = (w ?: box.width()).coerceAtLeast(1f)
+        var nh = (h ?: box.height()).coerceAtLeast(1f)
+        if (lockRatio) {
+            if (w != null && h == null) nh = nw * bh / bw
+            if (h != null && w == null) nw = nh * bw / bh
+        }
+        val nl = if (x != null) x + artboard.left else box.left
+        val nt = if (y != null) y + artboard.top else box.top
+        val m = Matrix().apply {
+            setScale(nw / bw, nh / bh, box.left, box.top)
+            postTranslate(nl - box.left, nt - box.top)
+        }
+        transformSelection { _, _ -> m }
+    }
+
+    /** Turns the selection by [deg] degrees (clockwise) about its centre. */
+    fun rotateSelection(deg: Float) = transformSelection { cx, cy -> Matrix().apply { setRotate(deg, cx, cy) } }
+
+    // ---------- clipboard ----------
+    private var clip by mutableStateOf(emptyList<Item>())
+
+    val canPaste: Boolean get() = clip.isNotEmpty()
+
+    fun copySelected() {
+        val sel = selectedItems()
+        if (sel.isEmpty()) return
+        clip = sel.map { it.copy() }
+    }
+
+    fun cutSelected() {
+        copySelected()
+        deleteSelected()
+    }
+
+    /** Pastes onto the active artboard: in the same place nudged aside when the copy is already there, else centred on it. */
+    fun paste() {
+        if (clip.isEmpty()) return
+        val a = artboard
+        change {
+            val groupMap = HashMap<Long, Long>()
+            val copies = clip.map { s ->
+                s.copyWithId(nextId++).also { c ->
+                    if (s.groupId != 0L) c.groupId = groupMap.getOrPut(s.groupId) { nextGroup++ }
+                }
+            }
+            val box = RectF(copies[0].box())
+            for (c in copies) box.union(c.box())
+            val dx: Float
+            val dy: Float
+            if (a.contains(box.centerX(), box.centerY())) {
+                dx = 24f
+                dy = 24f
+            } else {
+                dx = a.centerX() - box.centerX()
+                dy = a.centerY() - box.centerY()
+            }
+            for (c in copies) c.offset(dx, dy)
+            items = items + copies
+            selection = copies.map { it.id }.toSet()
+            tool = Tool.SELECT
+        }
+    }
+
+    // ---------- outline stroke and offset path ----------
+    /** Turns each selected stroke into a filled shape that keeps its width, caps, joins and dashes. */
+    fun outlineStroke() {
+        val ids = selectedItems().filter { it.stroke != null && it.strokeWidth > 0f && it.image == null }.map { it.id }.toSet()
+        if (ids.isEmpty()) return
+        change {
+            val list = ArrayList<Item>()
+            val picked = HashSet<Long>()
+            for (item in items) {
+                if (item.id !in ids) {
+                    list.add(item)
+                    continue
+                }
+                val ring = Path()
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    item.configureStroke(this)
+                }
+                paint.getFillPath(item.renderPath(), ring)
+                val outline = Item(nextId++, Kind.PATH, ring, RectF(), item.stroke, null, 0f).also {
+                    it.opacity = item.opacity
+                    it.groupId = item.groupId
+                }
+                if (item.fill != null) {
+                    item.stroke = null
+                    item.strokeWidth = 0f
+                    list.add(item)
+                    picked.add(item.id)
+                }
+                list.add(outline)
+                picked.add(outline.id)
+            }
+            items = list
+            selection = picked
+        }
+    }
+
+    /** Grows ([d] above 0) or shrinks ([d] below 0) the outline of each selected filled shape by |d| artboard units. */
+    fun offsetPath(d: Float) {
+        if (d == 0f) return
+        val ids = selectedItems().filter { it.fill != null && it.image == null }.map { it.id }.toSet()
+        if (ids.isEmpty()) return
+        change {
+            val picked = HashSet<Long>()
+            items = items.map { item ->
+                if (item.id !in ids) return@map item
+                val src = item.renderPath()
+                val band = Path()
+                Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = abs(d) * 2f
+                    strokeJoin = Paint.Join.ROUND
+                }.getFillPath(src, band)
+                val result = Path(src)
+                result.op(band, if (d > 0f) Path.Op.UNION else Path.Op.DIFFERENCE)
+                val moved = Item(nextId++, Kind.PATH, result, RectF(), item.fill, item.stroke, item.strokeWidth).also {
+                    it.gradient = item.gradient?.copy()
+                    it.opacity = item.opacity
+                    it.groupId = item.groupId
+                    it.dash = item.dash
+                    it.cap = item.cap
+                    it.join = item.join
+                    it.visible = item.visible
+                    it.locked = item.locked
+                }
+                picked.add(moved.id)
+                moved
+            }
+            selection = picked
+        }
+    }
+
+    // ---------- export ----------
+    /** [doc] with export choices: only the selection (cropped to it) and/or no background colour. */
+    fun exportDoc(selectionOnly: Boolean, transparent: Boolean): Doc {
+        val box = selectionBox()
+        if (!selectionOnly || box == null) {
+            val d = doc()
+            return if (transparent) Doc(d.items, d.w, d.h, null) else d
+        }
+        val pad = selectedItems().maxOf { it.strokeWidth } / 2f
+        box.inset(-pad, -pad)
+        val shown = selectedItems().map { it.copy().also { c -> c.offset(-box.left, -box.top) } }
+        return Doc(shown, max(box.width(), 1f), max(box.height(), 1f), if (transparent) null else background)
     }
 
     // ---------- import ----------

@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -65,6 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
@@ -91,6 +94,9 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -198,11 +204,18 @@ fun EditorScreen(ed: Editor) {
             report("Save failed: ${e.message}")
         }
     }
+    var pngDialog by remember { mutableStateOf(false) }
+    var pngSize by remember { mutableStateOf(2048) }
+    var pngClear by remember { mutableStateOf(false) }
+    var pngSel by remember { mutableStateOf(false) }
+    /** File name stem for exports: the active artboard's name, reduced to safe characters. */
+    fun fileBase() = ed.boards.getOrNull(ed.activeBoard)?.name.orEmpty()
+        .replace(Regex("[^A-Za-z0-9_-]+"), "-").trim('-').ifEmpty { "logo" }
     val svgOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/svg+xml")) { u ->
         write(u) { it.write(Export.svg(ed.doc()).toByteArray()) }
     }
     val pngOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { u ->
-        write(u) { Export.png(ed.doc(), it) }
+        write(u) { Export.png(ed.exportDoc(pngSel, pngClear), it, pngSize) }
     }
     val pdfOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { u ->
         write(u) { Export.pdf(ed.doc(), it) }
@@ -281,16 +294,44 @@ fun EditorScreen(ed: Editor) {
     }
     var updating by remember { mutableStateOf(false) }
     if (updating) UpdateDialog { updating = false }
+    if (pngDialog) {
+        AlertDialog(
+            onDismissRequest = { pngDialog = false },
+            title = { Text("Export PNG", fontSize = 16.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Label("Size (long side, px)")
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (v in listOf(512, 1024, 2048, 4096)) {
+                            FilterChip(pngSize == v, { pngSize = v }, { Text(v.toString(), fontSize = 12.sp) })
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(pngClear, { pngClear = !pngClear }, { Text("Transparent", fontSize = 12.sp) })
+                        FilterChip(pngSel, { pngSel = !pngSel }, { Text("Selection only", fontSize = 12.sp) }, enabled = ed.selection.isNotEmpty())
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton({
+                    pngDialog = false
+                    if (ed.selection.isEmpty()) pngSel = false
+                    pngOut.launch(fileBase() + ".png")
+                }) { Text("Export", fontSize = 12.sp) }
+            },
+            dismissButton = { TextButton({ pngDialog = false }) { Text("Cancel", fontSize = 12.sp) } },
+        )
+    }
     Column(Modifier.fillMaxSize().background(Back).safeDrawingPadding()) {
         TopBar(ed, { updating = true }) { op ->
             when (op) {
-                FileOp.SVG -> svgOut.launch("logo.svg")
-                FileOp.PNG -> pngOut.launch("logo.png")
-                FileOp.PDF -> pdfOut.launch("logo.pdf")
-                FileOp.PSD -> psdOut.launch("logo.psd")
-                FileOp.EPS -> epsOut.launch("logo.eps")
-                FileOp.AI -> aiOut.launch("logo.ai")
-                FileOp.SAVE -> projOut.launch("logo.logoxels.json")
+                FileOp.SVG -> svgOut.launch(fileBase() + ".svg")
+                FileOp.PNG -> pngDialog = true
+                FileOp.PDF -> pdfOut.launch(fileBase() + ".pdf")
+                FileOp.PSD -> psdOut.launch(fileBase() + ".psd")
+                FileOp.EPS -> epsOut.launch(fileBase() + ".eps")
+                FileOp.AI -> aiOut.launch(fileBase() + ".ai")
+                FileOp.SAVE -> projOut.launch(fileBase() + ".logoxels.json")
                 FileOp.IMPORT -> importIn.launch(arrayOf("*/*"))
                 FileOp.OPEN -> projIn.launch(arrayOf("*/*"))
             }
@@ -1325,7 +1366,36 @@ private fun CombinePanel(ed: Editor) {
             CombineBtn(G.Exclude, "Exclude", ok) { ed.combine(PfOp.EXCLUDE) }
         }
         Label(if (ok) "Result keeps the bottom shape's colours." else "Turn on Multi, then tap two or more shapes.")
+        val sel = ed.selectedItems()
+        var dist by remember { mutableFloatStateOf(10f) }
+        Label("Outline and offset (+ grows, - shrinks)")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Act("Outline stroke", sel.any { it.stroke != null && it.strokeWidth > 0f && it.image == null }) { ed.outlineStroke() }
+            Act("Apply offset", sel.any { it.fill != null && it.image == null }) { ed.offsetPath(dist) }
+        }
+        SliderRow("Offset", dist, -100f..100f, onEnd = {}) { dist = it }
     }
+}
+
+/** A number box that applies its value when the keyboard is dismissed with Done or the box loses focus. */
+@Composable
+private fun NumField(label: String, value: Float, modifier: Modifier, clearAfter: Boolean = false, onCommit: (Float) -> Unit) {
+    fun fmt(v: Float) = if (v == v.roundToInt().toFloat()) v.roundToInt().toString() else String.format(java.util.Locale.US, "%.1f", v)
+    var text by remember(value) { mutableStateOf(fmt(value)) }
+    fun commit() {
+        val v = text.replace(',', '.').toFloatOrNull()
+        if (v == null || v.isNaN() || v.isInfinite()) { text = fmt(value); return }
+        if (text != fmt(value)) onCommit(v)
+        if (clearAfter) text = fmt(value)
+    }
+    OutlinedTextField(
+        text, { text = it }, modifier.onFocusChanged { if (!it.isFocused) commit() },
+        label = { Text(label, fontSize = 12.sp) },
+        textStyle = TextStyle(fontSize = 12.sp, color = Ink),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { commit() }),
+    )
 }
 
 @Composable
@@ -1340,6 +1410,19 @@ private fun ArrangePanel(ed: Editor) {
     ed.version
     val n = ed.selection.size
     PanelBox {
+        val r = ed.selectionRect()
+        Label("Position and size (from artboard corner)")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val m = Modifier.weight(1f)
+            NumField("X", r?.left ?: 0f, m) { ed.setSelectionRect(it, null, null, null) }
+            NumField("Y", r?.top ?: 0f, m) { ed.setSelectionRect(null, it, null, null) }
+            NumField("W", r?.width() ?: 0f, m) { ed.setSelectionRect(null, null, it, null) }
+            NumField("H", r?.height() ?: 0f, m) { ed.setSelectionRect(null, null, null, it) }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            NumField("Turn by (deg)", 0f, Modifier.width(140.dp), clearAfter = true) { ed.rotateSelection(it) }
+            Text("Keeps ratio when Ratio is on.", fontSize = 12.sp, color = Muted)
+        }
         Label(if (n == 1) "Align to artboard" else "Align to selection")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Left", n > 0) { ed.align(AlignTo.LEFT) }
@@ -1374,6 +1457,10 @@ private fun ArrangePanel(ed: Editor) {
             Act("Backward", n > 0) { ed.reorder(front = false, toEnd = false) }
             Act("To back", n > 0) { ed.reorder(front = false, toEnd = true) }
             Act("Duplicate", n > 0) { ed.duplicateSelected() }
+            Act("Copy", n > 0) { ed.copySelected() }
+            Act("Cut", n > 0) { ed.cutSelected() }
+            Act("Paste", ed.canPaste) { ed.paste() }
+            Act("Zoom to fit", n > 0) { ed.fitSelection() }
             Act("Select all", true) { ed.selectAll() }
             Act("Delete", n > 0) { ed.deleteSelected() }
         }
@@ -1482,6 +1569,9 @@ private fun QuickBar(ed: Editor, modifier: Modifier) {
                 if (units >= 3) QBtn(G.DistH, "Distribute", active = open == "dist") { pick("dist") }
                 QDivider()
                 QBtn(G.Dup, "Duplicate") { ed.duplicateSelected() }
+                QBtn(G.Copy, "Copy") { ed.copySelected() }
+                QBtn(G.Paste, "Paste", ed.canPaste) { ed.paste() }
+                QBtn(G.Zoom, "Zoom") { ed.fitSelection() }
                 QBtn(G.SelAll, "Select all") { ed.selectAll() }
                 QBtn(G.Trash, "Delete") { ed.deleteSelected() }
             }
@@ -1506,6 +1596,7 @@ private fun BoardBar(ed: Editor, modifier: Modifier) {
             } else {
                 QBtn(G.Move, "Move") { ed.boardMenu = null; ed.boardMoveOn = true }
                 QBtn(G.Dup, "Duplicate") { ed.duplicateBoard(ed.activeBoard) }
+                QBtn(G.Paste, "Paste", ed.canPaste) { ed.paste() }
                 QBtn(G.Trash, "Delete", ed.boards.size > 1) { ed.removeBoard(ed.activeBoard) }
             }
         }
