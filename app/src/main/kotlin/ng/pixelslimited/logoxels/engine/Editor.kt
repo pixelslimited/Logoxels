@@ -765,7 +765,8 @@ class Editor {
                 val id = downHitId
                 if (!moved && multi && wasSelected && id != null) { selection = selection - downGroup; touch() }
             }
-            Mode.NONE -> if (!moved && !multi && selection.isNotEmpty()) { selection = emptySet(); touch() }
+            // a tap that lands on nothing, on the board or off it, is a tap out: it drops the selection and the quick bar with it
+            Mode.NONE -> if (!moved && selection.isNotEmpty()) { selection = emptySet(); quickOn = false; touch() }
             Mode.PICK -> if (!moved) {
                 val before = version
                 when (tool) {
