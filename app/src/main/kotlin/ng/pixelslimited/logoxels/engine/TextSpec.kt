@@ -19,7 +19,7 @@ class TextSpec(
     var text: String,
     var x: Float,
     var y: Float,
-    var font: Int = 0,
+    var font: Int = TextLayout.APP,
     var bold: Boolean = false,
     var italic: Boolean = false,
     var size: Float = 120f,
@@ -40,7 +40,14 @@ object TextLayout {
     val FONTS = listOf(
         "sans-serif" to "Sans", "serif" to "Serif", "monospace" to "Mono",
         "casual" to "Casual", "sans-serif-condensed" to "Condensed",
+        "" to "App",
     )
+
+    /** Index of the app's own interface font in [FONTS]; the default for new text. */
+    val APP = FONTS.lastIndex
+
+    /** The interface font, set once at startup; the system sans-serif stands in when it is missing. */
+    var appFace: Typeface? = null
     private const val OBSTACLE_GAP = 12f
 
     private fun paint(s: TextSpec) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -50,7 +57,9 @@ object TextLayout {
             s.italic -> Typeface.ITALIC
             else -> Typeface.NORMAL
         }
-        typeface = Typeface.create(FONTS[s.font.coerceIn(0, FONTS.lastIndex)].first, style)
+        val i = s.font.coerceIn(0, FONTS.lastIndex)
+        val face = if (i == APP) appFace else null
+        typeface = if (face != null) Typeface.create(face, style) else Typeface.create(FONTS[i].first.ifEmpty { "sans-serif" }, style)
         textSize = s.size
     }
 

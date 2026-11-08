@@ -1378,8 +1378,8 @@ private fun TextPanel(ed: Editor) {
         OutlinedTextField(tv, { tv = it; ed.setText(it) }, Modifier.fillMaxWidth(), label = { Text("Text", fontSize = 12.sp) })
         Label("Font")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextLayout.FONTS.forEachIndexed { i, f ->
-                Chip(spec.font == i, { ed.setFont(i) }, { Text(f.second, fontSize = 12.sp) })
+            (listOf(TextLayout.APP) + (0 until TextLayout.APP)).forEach { i ->
+                Chip(spec.font == i, { ed.setFont(i) }, { Text(TextLayout.FONTS[i].second, fontSize = 12.sp) })
             }
             Chip(spec.bold, { ed.setBold(!spec.bold) }, { Text("Bold", fontSize = 12.sp) })
             Chip(spec.italic, { ed.setItalic(!spec.italic) }, { Text("Italic", fontSize = 12.sp) })

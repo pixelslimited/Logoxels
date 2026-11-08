@@ -1,6 +1,7 @@
 package ng.pixelslimited.logoxels
 
 import android.content.res.Configuration
+import android.graphics.Typeface
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,6 +16,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import ng.pixelslimited.logoxels.engine.Editor
+import ng.pixelslimited.logoxels.engine.TextLayout
 import ng.pixelslimited.logoxels.ui.EditorScreen
 import ng.pixelslimited.logoxels.ui.Ink
 import ng.pixelslimited.logoxels.ui.Pal
@@ -29,6 +31,7 @@ class MainActivity : ComponentActivity() {
         val night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         Pal.dark = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("dark", night)
         val font = uiFont(this)
+        TextLayout.appFace = runCatching { Typeface.createFromAsset(assets, "fonts/ui.ttf") }.getOrNull()
         setContent {
             val scheme = if (Pal.dark) darkColorScheme(primary = Color(0xFF2DD4BF)) else lightColorScheme(primary = Color(0xFF0F766E))
             MaterialTheme(colorScheme = scheme, typography = Typography().withFont(font)) {
