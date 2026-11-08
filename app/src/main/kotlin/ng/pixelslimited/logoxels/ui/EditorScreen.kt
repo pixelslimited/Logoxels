@@ -1697,6 +1697,13 @@ private fun QuickBar(ed: Editor, modifier: Modifier) {
                         QBtn(G.AlignM, "Middle") { ed.align(AlignTo.MIDDLE) }
                         QBtn(G.AlignB, "Bottom") { ed.align(AlignTo.BOTTOM) }
                     }
+                    "nudge" -> {
+                        QBtn(G.ArrL, "Left") { ed.nudge(-1, 0) }
+                        QBtn(G.ArrU, "Up") { ed.nudge(0, -1) }
+                        QBtn(G.ArrD, "Down") { ed.nudge(0, 1) }
+                        QBtn(G.ArrR, "Right") { ed.nudge(1, 0) }
+                        QBtn(G.Grid, "Step ${ed.nudgeStep}") { ed.cycleNudgeStep() }
+                    }
                     "rotate" -> {
                         QBtn(G.RotL, "Rotate left") { ed.rotate90(false) }
                         QBtn(G.RotR, "Rotate right") { ed.rotate90(true) }
@@ -1725,6 +1732,7 @@ private fun QuickBar(ed: Editor, modifier: Modifier) {
             }
             QPill {
                 QBtn(G.AlignL, "Align", active = open == "align") { pick("align") }
+                QBtn(G.Move, "Nudge", active = open == "nudge") { pick("nudge") }
                 QBtn(G.RotR, "Rotate", active = open == "rotate") { pick("rotate") }
                 QBtn(G.Arrange, "Order", active = open == "order") { pick("order") }
                 if (n >= 2) {

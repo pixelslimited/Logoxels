@@ -25,7 +25,7 @@ import kotlin.math.sin
 enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch, Theme,
     AlignL, AlignC, AlignR, AlignT, AlignM, AlignB, RotL, RotR, FlipH, FlipV, ToFront, Forward, Backward, ToBack,
     Group, Ungroup, Clip, Unclip, DistH, DistV, Dup, SelAll, Trash, Move, Check,
-    Eye, EyeOff, Lock, Unlock, Grip, Close, Copy, Paste, Zoom }
+    Eye, EyeOff, Lock, Unlock, Grip, Close, Copy, Paste, Zoom, ArrL, ArrR, ArrU, ArrD }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -270,6 +270,10 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                     }
                 }, tint, style = st)
             }
+            G.ArrL -> tri(pt(.14f, .5f), pt(.8f, .16f), pt(.8f, .84f), true)
+            G.ArrR -> tri(pt(.86f, .5f), pt(.2f, .16f), pt(.2f, .84f), true)
+            G.ArrU -> tri(pt(.5f, .14f), pt(.16f, .8f), pt(.84f, .8f), true)
+            G.ArrD -> tri(pt(.5f, .86f), pt(.16f, .2f), pt(.84f, .2f), true)
             G.Zoom -> {
                 drawCircle(tint, w * .24f, pt(.44f, .44f), style = st)
                 ln(.62f, .62f, .84f, .84f, .1f)
