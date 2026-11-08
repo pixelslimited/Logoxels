@@ -1771,7 +1771,7 @@ private fun QPill(content: @Composable () -> Unit) {
 private fun BoxScope.EdgeHint(g: G, at: Alignment, fromStart: Boolean) {
     val fade = if (fromStart) listOf(Bar, Color.Transparent) else listOf(Color.Transparent, Bar)
     Box(
-        Modifier.align(at).fillMaxHeight().width(32.dp).background(Brush.horizontalGradient(fade)),
+        Modifier.align(at).width(32.dp).matchParentSize().background(Brush.horizontalGradient(fade)),
         contentAlignment = Alignment.Center,
     ) { Glyph(g, Muted, Modifier.graphicsLayer(scaleX = 0.6f, scaleY = 0.6f)) }
 }
