@@ -1341,7 +1341,7 @@ private fun PenPanel(ed: Editor) {
 @Composable
 private fun BuilderPanel(ed: Editor) {
     ed.version
-    val usable = ed.selectedItems().count { it.fill != null && it.image == null }
+    val usable = ed.selectedItems().count { it.image == null }
     PanelBox {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip(!ed.builderErase, { ed.builderErase = false }, { Text("Merge", fontSize = 12.sp) })
@@ -1349,7 +1349,7 @@ private fun BuilderPanel(ed: Editor) {
         }
         Hint(
             when {
-                usable < 2 -> "Select two or more overlapping shapes first"
+                usable < 2 -> "Select two or more shapes or lines that cross"
                 ed.builderErase -> "Drag across regions to delete them"
                 else -> "Drag across regions to merge them, tap one to break it out"
             },

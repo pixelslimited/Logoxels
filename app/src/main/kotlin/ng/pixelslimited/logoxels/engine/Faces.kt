@@ -1,5 +1,6 @@
 package ng.pixelslimited.logoxels.engine
 
+import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PathMeasure
 import android.graphics.RectF
@@ -7,12 +8,18 @@ import android.graphics.Region
 import ng.pixelslimited.logoxels.engine.geom.PathBridge
 import kotlin.math.roundToInt
 
-/** One connected region of an overlapping set of shapes, with the shape whose look it takes. */
-class Face(val path: Path, val source: Item)
+/** One connected region of a set of overlapping shapes; [source] is the shape whose look it takes, or null when no closed shape covers it. */
+class Face(val path: Path, val source: Item?)
 
-/** Splits overlapping shapes into their regions, the pieces the shape builder merges and erases. */
+/**
+ * Splits shapes into the regions their outlines enclose, the pieces the shape builder merges and erases.
+ * Filled shapes, stroke-only shapes and open lines all count: only their outlines matter.
+ */
 object Faces {
     private val clip = Region(-100000, -100000, 100000, 100000)
+
+    /** Width of the line drawn along every outline; regions are found between these lines, then grown back by half of it. */
+    private const val LINE = 1f
 
     private fun tiny(p: Path): Boolean {
         if (p.isEmpty) return true
@@ -21,56 +28,80 @@ object Faces {
         return b.width() < 0.2f || b.height() < 0.2f
     }
 
+    private fun outline(path: Path, width: Float): Path {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = width
+            strokeJoin = Paint.Join.ROUND
+            strokeCap = Paint.Cap.ROUND
+        }
+        return Path().also { paint.getFillPath(path, it) }
+    }
+
+    private class Ring(val path: Path, val depth: Int, val parent: Int)
+
+    /** The closed outlines in [path], each with how many outlines enclose it and which one directly encloses it. */
+    private fun rings(path: Path): List<Ring> {
+        val parts = PathBridge.toContours(path).filter { it.closed }.map { PathBridge.toPath(listOf(it)) }
+        val regions = parts.map { region(it) }
+        val within = parts.indices.map { i ->
+            val at = FloatArray(2)
+            if (PathMeasure(parts[i], false).getPosTan(0f, at, null)) {
+                parts.indices.filter { j -> j != i && regions[j].contains(at[0].roundToInt(), at[1].roundToInt()) }
+            } else {
+                emptyList()
+            }
+        }
+        return parts.indices.map { i ->
+            val depth = within[i].size
+            Ring(parts[i], depth, within[i].firstOrNull { j -> within[j].size == depth - 1 } ?: -1)
+        }
+    }
+
     /**
-     * The regions of [items] (bottom to top). They do not overlap, together cover the same area,
-     * and each takes the look of the topmost shape over it.
+     * The regions of [items] (bottom to top). They do not overlap, and each takes the look of the topmost
+     * closed shape over it. Areas enclosed only by gaps between shapes are left out when any closed shape is present.
      */
     fun of(items: List<Item>): List<Face> {
-        var faces = ArrayList<Face>()
+        var lines: Path? = null
         for (item in items) {
-            val shape = item.renderPath()
-            val next = ArrayList<Face>()
-            val fresh = Path(shape)
-            for (f in faces) {
-                val inside = Path(f.path)
-                val outside = Path(f.path)
-                if (inside.op(shape, Path.Op.INTERSECT) && !tiny(inside)) next.add(Face(inside, item))
-                if (outside.op(shape, Path.Op.DIFFERENCE) && !tiny(outside)) next.add(Face(outside, f.source))
-                fresh.op(f.path, Path.Op.DIFFERENCE)
-            }
-            if (!tiny(fresh)) next.add(Face(fresh, item))
-            faces = next
+            val band = outline(item.renderPath(), LINE)
+            val sum = lines
+            if (sum == null) lines = band else sum.op(band, Path.Op.UNION)
         }
-        return faces.flatMap { f -> split(f.path).map { Face(it, f.source) } }
+        val all = lines ?: return emptyList()
+        val areas = items.filter { it.fill != null || PathBridge.toContours(it.renderPath()).let { c -> c.isNotEmpty() && c.all { k -> k.closed } } }
+            .map { it to it.renderPath() }
+        var covered: Path? = null
+        for ((_, a) in areas) {
+            val sum = covered
+            if (sum == null) covered = Path(a) else sum.op(a, Path.Op.UNION)
+        }
+        val rings = rings(all)
+        val out = ArrayList<Face>()
+        for ((i, ring) in rings.withIndex()) {
+            if (ring.depth % 2 == 0) continue
+            val region = Path().apply { fillType = Path.FillType.EVEN_ODD }
+            region.addPath(ring.path)
+            for (h in rings) if (h.depth == ring.depth + 1 && h.parent == i) region.addPath(h.path)
+            // the lines took half their width from each side of the region: give it back
+            val grown = Path(region)
+            grown.op(outline(region, LINE), Path.Op.UNION)
+            if (tiny(grown)) continue
+            var source: Item? = null
+            if (covered != null) {
+                val inCover = Path(grown)
+                if (!inCover.op(covered, Path.Op.INTERSECT) || tiny(inCover)) continue
+                for ((item, a) in areas.asReversed()) {
+                    val over = Path(grown)
+                    if (over.op(a, Path.Op.INTERSECT) && !tiny(over)) { source = item; break }
+                }
+            }
+            out.add(Face(grown, source))
+        }
+        return out
     }
 
     /** The area of [path] as a region for hit-testing (whole-unit accuracy). */
     fun region(path: Path): Region = Region().also { it.setPath(path, clip) }
-
-    /** The separate pieces of [path]: each outer outline together with the holes inside it. */
-    fun split(path: Path): List<Path> {
-        val parts = PathBridge.toContours(path).filter { it.closed }.map { PathBridge.toPath(listOf(it)) }
-        if (parts.size < 2) return listOf(path)
-        val regions = parts.map { region(it) }
-        val starts = parts.map { p ->
-            val pos = FloatArray(2)
-            if (PathMeasure(p, false).getPosTan(0f, pos, null)) pos else null
-        }
-        // contours containing contour i: an even count means an outline, an odd count a hole
-        val parents = parts.indices.map { i ->
-            val at = starts[i]
-            if (at == null) emptyList() else parts.indices.filter { j -> j != i && regions[j].contains(at[0].roundToInt(), at[1].roundToInt()) }
-        }
-        val out = ArrayList<Path>()
-        for (i in parts.indices) {
-            if (parents[i].size % 2 != 0) continue
-            val piece = Path().apply { fillType = Path.FillType.EVEN_ODD }
-            piece.addPath(parts[i])
-            for (h in parts.indices) {
-                if (parents[h].size == parents[i].size + 1 && i in parents[h]) piece.addPath(parts[h])
-            }
-            out.add(piece)
-        }
-        return out.ifEmpty { listOf(path) }
-    }
 }

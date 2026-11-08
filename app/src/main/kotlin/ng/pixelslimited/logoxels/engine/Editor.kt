@@ -1277,16 +1277,18 @@ class Editor {
         }
     }
 
-    /** A new plain path shape that takes the look of [src]. */
-    private fun pathItem(src: Item, path: Path): Item = Item(nextId++, Kind.PATH, path, RectF(), src.fill, src.stroke, src.strokeWidth).also {
-        it.gradient = src.gradient?.copy()
-        it.opacity = src.opacity
-        it.groupId = src.groupId
-        it.dash = src.dash
-        it.cap = src.cap
-        it.join = src.join
-        it.visible = src.visible
-        it.locked = src.locked
+    /** A new plain path shape that takes the look of [src]; unfilled or missing sources get the current fill. */
+    private fun pathItem(src: Item?, path: Path): Item = Item(nextId++, Kind.PATH, path, RectF(), src?.fill ?: nextFill, src?.stroke, src?.strokeWidth ?: 0f).also {
+        if (src != null) {
+            it.gradient = src.gradient?.copy()
+            it.opacity = src.opacity
+            it.groupId = src.groupId
+            it.dash = src.dash
+            it.cap = src.cap
+            it.join = src.join
+            it.visible = src.visible
+            it.locked = src.locked
+        }
     }
 
     // ---------- shape builder ----------
@@ -1301,9 +1303,9 @@ class Editor {
     private var builderIds: Set<Long> = emptySet()
     private val touched = LinkedHashSet<Int>()
 
-    /** Splits the selected filled shapes into regions; false when fewer than two are selected (the tool then just selects). */
+    /** Splits the selected shapes into regions; false when fewer than two are selected (the tool then just selects). */
     private fun builderStart(): Boolean {
-        val src = selectedItems().filter { it.fill != null && it.image == null }
+        val src = selectedItems().filter { it.image == null }
         if (src.size < 2) return false
         faces = Faces.of(src)
         regions = faces.map { Faces.region(it.path) }
