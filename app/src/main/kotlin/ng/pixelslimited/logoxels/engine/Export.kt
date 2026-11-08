@@ -37,8 +37,8 @@ object Export {
 
     private fun px(v: Float, k: Float) = (v * k).roundToInt().coerceAtLeast(1)
 
-    /** PNG at up to [maxPx] on the long side; transparent unless the document has a background. */
-    fun png(doc: Doc, out: OutputStream, maxPx: Int = 2000) {
+    /** The document drawn at up to [maxPx] on the long side; transparent unless it has a background. The caller owns the bitmap. */
+    fun bitmap(doc: Doc, maxPx: Int): Bitmap {
         val k = maxPx / max(doc.w, doc.h)
         val bmp = Bitmap.createBitmap(px(doc.w, k), px(doc.h, k), Bitmap.Config.ARGB_8888)
         try {
@@ -46,6 +46,16 @@ object Export {
             doc.background?.let { c.drawColor(it) }
             c.scale(k, k)
             Render.draw(c, doc.items)
+        } catch (e: Exception) {
+            bmp.recycle()
+            throw e
+        }
+        return bmp
+    }
+
+    fun png(doc: Doc, out: OutputStream, maxPx: Int = 2000) {
+        val bmp = bitmap(doc, maxPx)
+        try {
             bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         } finally {
             bmp.recycle()

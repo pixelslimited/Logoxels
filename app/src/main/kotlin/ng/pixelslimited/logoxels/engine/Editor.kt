@@ -1188,11 +1188,6 @@ class Editor {
         clip = sel.map { it.copy() }
     }
 
-    fun cutSelected() {
-        copySelected()
-        deleteSelected()
-    }
-
     /** Pastes onto the active artboard: in the same place nudged aside when the copy is already there, else centred on it. */
     fun paste() {
         if (clip.isEmpty()) return

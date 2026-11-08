@@ -2,6 +2,7 @@ package ng.pixelslimited.logoxels.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -76,7 +77,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Path as CPath
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -152,7 +156,7 @@ private tailrec fun android.content.Context.hostActivity(): android.app.Activity
     else -> null
 }
 
-internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID, ICONS, TRACE, ARTBOARD }
+internal enum class Panel { NONE, STYLE, COMBINE, TRANSFORM, LAYERS, GRID, ICONS, TRACE, ARTBOARD, PREVIEW }
 
 private val palette = listOf(
     0xFF111827, 0xFFFFFFFF, 0xFFEF4444, 0xFFF97316, 0xFFFACC15, 0xFF22C55E,
@@ -344,7 +348,7 @@ fun EditorScreen(ed: Editor) {
                 .dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget),
         ) {
             EditorCanvas(ed)
-            QuickBar(ed, Modifier.align(Alignment.BottomCenter).padding(end = 76.dp))
+            QuickBar(ed, Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp))
             BoardBar(ed, Modifier.align(Alignment.TopCenter))
             ToolDial(ed, panel) { panel = if (panel == it) Panel.NONE else it }
         }
@@ -360,7 +364,8 @@ fun EditorScreen(ed: Editor) {
             else -> when (panel) {
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
-                Panel.ARRANGE -> ArrangePanel(ed)
+                Panel.TRANSFORM -> TransformPanel(ed)
+                Panel.PREVIEW -> PreviewPanel(ed)
                 Panel.LAYERS -> LayersPanel(ed)
                 Panel.GRID -> GridPanel(ed)
                 Panel.ICONS -> IconsPanel(ed)
@@ -696,42 +701,42 @@ private fun IconBtn(g: G, enabled: Boolean, onClick: () -> Unit) {
     IconButton(onClick = onClick, enabled = enabled) { Glyph(g, if (enabled) Ink else Muted) }
 }
 
-private class ToolEntry(val g: G, val label: String, val tool: Tool)
+/** One dial choice: a tool or a panel. */
+private class DialEntry(val g: G, val label: String, val tool: Tool? = null, val panel: Panel? = null)
 
-/** One dial button: a single tool, or a named group whose tools open as extra rows. */
-private class ToolGroupDef(val name: String, val entries: List<ToolEntry>)
+/** One dial button: a single choice, or a named group whose choices open as extra rows. */
+private class DialGroup(val name: String, val entries: List<DialEntry>)
 
-private class PanelDef(val g: G, val label: String, val panel: Panel)
+private fun tool(g: G, label: String, t: Tool) = DialEntry(g, label, tool = t)
+private fun panel(g: G, label: String, p: Panel) = DialEntry(g, label, panel = p)
 
-private fun oneTool(g: G, label: String, tool: Tool) = ToolGroupDef(label, listOf(ToolEntry(g, label, tool)))
-
-private val dialTools = listOf(
-    oneTool(G.Select, "Select", Tool.SELECT),
-    ToolGroupDef(
+private val dialGroups = listOf(
+    DialGroup("Select", listOf(tool(G.Select, "Select", Tool.SELECT))),
+    DialGroup(
         "Shapes",
         listOf(
-            ToolEntry(G.Rect, "Rectangle", Tool.RECT), ToolEntry(G.Oval, "Oval", Tool.ELLIPSE),
-            ToolEntry(G.Polygon, "Polygon", Tool.POLYGON), ToolEntry(G.Star, "Star", Tool.STAR),
-            ToolEntry(G.Line, "Line", Tool.LINE),
+            tool(G.Rect, "Rectangle", Tool.RECT), tool(G.Oval, "Oval", Tool.ELLIPSE), tool(G.Polygon, "Polygon", Tool.POLYGON),
+            tool(G.Star, "Star", Tool.STAR), tool(G.Line, "Line", Tool.LINE),
         ),
     ),
-    ToolGroupDef("Draw", listOf(ToolEntry(G.Pen, "Pen", Tool.PEN), ToolEntry(G.Sketch, "Sketch", Tool.SKETCH))),
-    oneTool(G.Text, "Text", Tool.TEXT),
-    ToolGroupDef(
+    DialGroup("Draw", listOf(tool(G.Pen, "Pen", Tool.PEN), tool(G.Sketch, "Sketch", Tool.SKETCH), tool(G.Text, "Text", Tool.TEXT))),
+    DialGroup(
         "Edit",
         listOf(
-            ToolEntry(G.Nodes, "Nodes", Tool.NODES), ToolEntry(G.Corner, "Corners", Tool.CORNERS),
-            ToolEntry(G.Scissors, "Scissors", Tool.SCISSORS), ToolEntry(G.Knife, "Knife", Tool.KNIFE),
+            tool(G.Nodes, "Nodes", Tool.NODES), tool(G.Corner, "Corners", Tool.CORNERS),
+            tool(G.Scissors, "Scissors", Tool.SCISSORS), tool(G.Knife, "Knife", Tool.KNIFE),
         ),
     ),
-    oneTool(G.Eyedropper, "Eyedrop", Tool.EYEDROPPER),
-)
-
-private val dialPanels = listOf(
-    PanelDef(G.Style, "Style", Panel.STYLE), PanelDef(G.Union, "Combine", Panel.COMBINE),
-    PanelDef(G.Arrange, "Arrange", Panel.ARRANGE), PanelDef(G.Layers, "Layers", Panel.LAYERS),
-    PanelDef(G.Grid, "Grid", Panel.GRID), PanelDef(G.Library, "Library", Panel.ICONS),
-    PanelDef(G.Trace, "Trace", Panel.TRACE), PanelDef(G.Artboard, "Canvas", Panel.ARTBOARD),
+    DialGroup("Paint", listOf(panel(G.Style, "Style", Panel.STYLE), tool(G.Eyedropper, "Eyedrop", Tool.EYEDROPPER))),
+    DialGroup(
+        "Object",
+        listOf(panel(G.Arrange, "Position", Panel.TRANSFORM), panel(G.Union, "Combine", Panel.COMBINE), panel(G.Layers, "Layers", Panel.LAYERS)),
+    ),
+    DialGroup(
+        "Board",
+        listOf(panel(G.Artboard, "Canvas", Panel.ARTBOARD), panel(G.Grid, "Grid", Panel.GRID), panel(G.Eye, "Preview", Panel.PREVIEW)),
+    ),
+    DialGroup("Assets", listOf(panel(G.Library, "Library", Panel.ICONS), panel(G.Trace, "Trace", Panel.TRACE))),
 )
 
 private class DialRow(val g: G, val label: String, val active: Boolean, val small: Boolean = false, val onClick: () -> Unit)
@@ -757,24 +762,25 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         group = null
         ed.tool = Tool.SELECT
     }
-    fun pickTool(t: Tool) {
-        ed.tool = t
+    fun isOn(e: DialEntry) = (e.tool != null && e.tool == ed.tool) || (e.panel != null && e.panel == panel)
+    fun pick(e: DialEntry) {
+        e.tool?.let { ed.tool = it }
+        e.panel?.let(onPanel)
         open = false
         group = null
     }
     val rows = ArrayList<DialRow>()
-    for (d in dialTools) {
+    for (d in dialGroups) {
         val single = d.entries.singleOrNull()
         if (single != null) {
-            rows.add(DialRow(single.g, single.label, ed.tool == single.tool) { pickTool(single.tool) })
+            rows.add(DialRow(single.g, single.label, isOn(single)) { pick(single) })
         } else {
-            val act = d.entries.firstOrNull { it.tool == ed.tool }
+            val act = d.entries.firstOrNull { isOn(it) }
             rows.add(DialRow((act ?: d.entries[0]).g, d.name, act != null || group == d.name) { group = if (group == d.name) null else d.name })
-            if (group == d.name) for (e in d.entries) rows.add(DialRow(e.g, e.label, ed.tool == e.tool, small = true) { pickTool(e.tool) })
+            if (group == d.name) for (e in d.entries) rows.add(DialRow(e.g, e.label, isOn(e), small = true) { pick(e) })
         }
     }
-    for (p in dialPanels) rows.add(DialRow(p.g, p.label, panel == p.panel) { onPanel(p.panel); open = false; group = null })
-    val activeGlyph = dialTools.flatMap { it.entries }.firstOrNull { it.tool == ed.tool }?.g ?: G.Select
+    val activeGlyph = dialGroups.flatMap { it.entries }.firstOrNull { it.tool != null && it.tool == ed.tool }?.g ?: G.Select
     val fab = pos ?: Offset(area.width - fabPx - marginPx, area.height - fabPx - marginPx)
     val known = area.width > 0
     // labels sit on the side towards the middle of the board, and the column opens towards it
@@ -1406,11 +1412,10 @@ private fun Act(label: String, enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ArrangePanel(ed: Editor) {
+private fun TransformPanel(ed: Editor) {
     ed.version
-    val n = ed.selection.size
+    val r = ed.selectionRect()
     PanelBox {
-        val r = ed.selectionRect()
         Label("Position and size (from artboard corner)")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val m = Modifier.weight(1f)
@@ -1421,49 +1426,67 @@ private fun ArrangePanel(ed: Editor) {
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             NumField("Turn by (deg)", 0f, Modifier.width(140.dp), clearAfter = true) { ed.rotateSelection(it) }
-            Text("Keeps ratio when Ratio is on.", fontSize = 12.sp, color = Muted)
+            Text(if (r == null) "Select a shape first." else "Keeps ratio when Ratio is on.", fontSize = 12.sp, color = Muted)
         }
-        Label(if (n == 1) "Align to artboard" else "Align to selection")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Act("Left", n > 0) { ed.align(AlignTo.LEFT) }
-            Act("Center", n > 0) { ed.align(AlignTo.CENTER) }
-            Act("Right", n > 0) { ed.align(AlignTo.RIGHT) }
-            Act("Top", n > 0) { ed.align(AlignTo.TOP) }
-            Act("Middle", n > 0) { ed.align(AlignTo.MIDDLE) }
-            Act("Bottom", n > 0) { ed.align(AlignTo.BOTTOM) }
+    }
+}
+
+/** The logo as it will look in use: on light and dark, at small sizes, and as a phone app icon. */
+@Composable
+private fun PreviewPanel(ed: Editor) {
+    val doc = remember(ed.version, ed.activeBoard) { ed.exportDoc(selectionOnly = false, transparent = true) }
+    val bmp = remember(doc) { Export.bitmap(doc, 256).asImageBitmap() }
+    val name = ed.boards.getOrNull(ed.activeBoard)?.name.orEmpty()
+    val dark = Color(0xFF111827)
+    PanelBox {
+        if (doc.items.isEmpty()) {
+            Text("Nothing on this artboard yet.", fontSize = 12.sp, color = Muted)
+            return@PanelBox
         }
-        Label("Distribute (3 or more)")
+        Label("On light and dark, at 16, 32 and 48 px")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Act("Horizontally", n >= 3) { ed.distribute(true) }
-            Act("Vertically", n >= 3) { ed.distribute(false) }
+            PreviewTile(bmp, Color.White, Modifier.weight(1f))
+            PreviewTile(bmp, dark, Modifier.weight(1f))
         }
-        Label("Group and clip")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Act("Group", n >= 2) { ed.group() }
-            Act("Ungroup", ed.selectedItems().any { it.groupId != 0L }) { ed.ungroup() }
-            Act("Clip to top shape", n >= 2) { ed.clipToTop() }
+        Label("As a phone app icon")
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color(0xFF1E3A8A), Color(0xFF0F172A))), RoundedCornerShape(16.dp))
+                .horizontalScroll(rememberScrollState())
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            AppIcon(bmp, Color.White, name)
+            AppIcon(bmp, dark, name)
+            AppIcon(bmp, Accent, name)
+            repeat(2) { Box(Modifier.size(56.dp).background(Color.White.copy(alpha = 0.14f), RoundedCornerShape(13.dp))) }
         }
-        Label("Rotate and flip")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Act("Rotate left", n > 0) { ed.rotate90(false) }
-            Act("Rotate right", n > 0) { ed.rotate90(true) }
-            Act("Flip horizontal", n > 0) { ed.flip(true) }
-            Act("Flip vertical", n > 0) { ed.flip(false) }
+    }
+}
+
+@Composable
+private fun PreviewTile(bmp: ImageBitmap, bg: Color, modifier: Modifier) {
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        modifier.background(bg, shape).border(1.dp, Line, shape).padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Image(bmp, null, Modifier.size(96.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Bottom) {
+            for (px in listOf(16, 32, 48)) Image(bmp, null, Modifier.size(px.dp))
         }
-        Label("Order and edit")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Act("To front", n > 0) { ed.reorder(front = true, toEnd = true) }
-            Act("Forward", n > 0) { ed.reorder(front = true, toEnd = false) }
-            Act("Backward", n > 0) { ed.reorder(front = false, toEnd = false) }
-            Act("To back", n > 0) { ed.reorder(front = false, toEnd = true) }
-            Act("Duplicate", n > 0) { ed.duplicateSelected() }
-            Act("Copy", n > 0) { ed.copySelected() }
-            Act("Cut", n > 0) { ed.cutSelected() }
-            Act("Paste", ed.canPaste) { ed.paste() }
-            Act("Zoom to fit", n > 0) { ed.fitSelection() }
-            Act("Select all", true) { ed.selectAll() }
-            Act("Delete", n > 0) { ed.deleteSelected() }
+    }
+}
+
+@Composable
+private fun AppIcon(bmp: ImageBitmap, bg: Color, name: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(Modifier.size(56.dp).clip(RoundedCornerShape(13.dp)).background(bg), contentAlignment = Alignment.Center) {
+            Image(bmp, null, Modifier.size(40.dp))
         }
+        Text(name.take(9), fontSize = 12.sp, color = Color.White, maxLines = 1)
     }
 }
 
