@@ -72,15 +72,15 @@ internal fun UpdateDialog(onClose: () -> Unit) {
         text = {
             Column {
                 when (s) {
-                    UpdateStep.Checking -> Text("Checking for a newer version...", fontSize = 14.sp)
-                    UpdateStep.Current -> Text("You have the latest version ($name).", fontSize = 14.sp)
+                    UpdateStep.Checking -> Text("Checking for updates", fontSize = 14.sp)
+                    UpdateStep.Current -> Text("Up to date ($name)", fontSize = 14.sp)
                     is UpdateStep.Found -> Text(
                         "A newer build is available (build ${s.rel.build}, you have $installed). " +
                             "Your work is autosaved and is kept when the app updates.",
                         fontSize = 14.sp,
                     )
                     is UpdateStep.Downloading -> {
-                        Text("Downloading...", fontSize = 14.sp)
+                        Text("Downloading", fontSize = 14.sp)
                         if (s.progress >= 0f) LinearProgressIndicator({ s.progress }, Modifier.fillMaxWidth())
                         else LinearProgressIndicator(Modifier.fillMaxWidth())
                     }

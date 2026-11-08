@@ -62,14 +62,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -342,12 +342,12 @@ fun EditorScreen(ed: Editor) {
                     Label("Size (long side, px)")
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (v in listOf(512, 1024, 2048, 4096)) {
-                            FilterChip(pngSize == v, { pngSize = v }, { Text(v.toString(), fontSize = 12.sp) })
+                            Chip(pngSize == v, { pngSize = v }, { Text(v.toString(), fontSize = 12.sp) })
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(pngClear, { pngClear = !pngClear }, { Text("Transparent", fontSize = 12.sp) })
-                        FilterChip(pngSel, { pngSel = !pngSel }, { Text("Selection only", fontSize = 12.sp) }, enabled = ed.selection.isNotEmpty())
+                        Chip(pngClear, { pngClear = !pngClear }, { Text("Transparent", fontSize = 12.sp) })
+                        Chip(pngSel, { pngSel = !pngSel }, { Text("Selection only", fontSize = 12.sp) }, enabled = ed.selection.isNotEmpty())
                     }
                 }
             },
@@ -752,9 +752,9 @@ private fun TopBar(ed: Editor, onUpdate: () -> Unit, onFile: (FileOp) -> Unit) {
         IconBtn(G.Undo, ed.canUndo) { ed.undo() }
         IconBtn(G.Redo, ed.canRedo) { ed.redo() }
         Spacer(Modifier.width(4.dp))
-        FilterChip(ed.multi, { ed.multi = !ed.multi }, { Text("Multi", fontSize = 12.sp) })
+        Chip(ed.multi, { ed.multi = !ed.multi }, { Text("Multi", fontSize = 12.sp) })
         Spacer(Modifier.width(4.dp))
-        FilterChip(ed.lockRatio, { ed.lockRatio = !ed.lockRatio }, { Text("Ratio", fontSize = 12.sp) })
+        Chip(ed.lockRatio, { ed.lockRatio = !ed.lockRatio }, { Text("Ratio", fontSize = 12.sp) })
     }
 }
 
@@ -985,7 +985,6 @@ private fun DialLabel(r: DialRow, shape: RoundedCornerShape) {
         color = Ink,
         fontWeight = if (r.active) FontWeight.Bold else FontWeight.Normal,
         modifier = Modifier
-            .shadow(2.dp, shape)
             .background(Bar, shape)
             .clip(shape)
             .clickable(onClick = r.onClick)
@@ -1008,6 +1007,30 @@ private fun PanelBox(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+/** A flat option button: a tinted rectangle when selected, plain text otherwise. No pill, no border. */
+@Composable
+private fun Chip(selected: Boolean, onClick: () -> Unit, label: @Composable () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    Box(
+        modifier
+            .pressScale()
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (selected) SelBg else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        CompositionLocalProvider(LocalContentColor provides if (enabled) Ink else Muted, content = label)
+    }
+}
+
+/** True for colours pale enough to disappear on a white panel, which are the only ones that get an edge. */
+private fun isPale(c: Int): Boolean {
+    val r = android.graphics.Color.red(c)
+    val g = android.graphics.Color.green(c)
+    val b = android.graphics.Color.blue(c)
+    return 0.299f * r + 0.587f * g + 0.114f * b > 225f
+}
+
 /** Short explanation in regular grey, so titles stay the only bold text. */
 @Composable
 private fun Hint(text: String) {
@@ -1021,7 +1044,6 @@ private fun Label(text: String) {
 
 @Composable
 private fun Swatch(color: Int?, selected: Boolean, onDouble: (() -> Unit)? = null, onClick: () -> Unit) {
-    val ring = if (selected) Accent else Line
     val click by rememberUpdatedState(onClick)
     val double by rememberUpdatedState(onDouble)
     Box(
@@ -1030,7 +1052,7 @@ private fun Swatch(color: Int?, selected: Boolean, onDouble: (() -> Unit)? = nul
             .pressScale()
             .clip(CircleShape)
             .background(if (color == null) Color.White else Color(color))
-            .border(if (selected) 3.dp else 1.dp, ring, CircleShape)
+            .then(if (selected) Modifier.border(3.dp, Accent, CircleShape) else if (color == null || isPale(color)) Modifier.border(1.dp, Line, CircleShape) else Modifier)
             // a double tap opens the picker; only swatches that offer it wait for the second tap
             .pointerInput(onDouble != null) {
                 detectTapGestures(onDoubleTap = if (onDouble != null) { _: Offset -> double?.invoke() } else null, onTap = { click() })
@@ -1054,7 +1076,7 @@ private fun ColorRow(current: Int?, allowNone: Boolean, onPick: (Int?) -> Unit) 
         if (current != null && current !in palette) Swatch(current, true) { edit(current) }
         palette.forEach { c -> Swatch(c, current == c, onDouble = { edit(c) }) { onPick(c) } }
         Box(
-            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Line, CircleShape).clickable { edit(current ?: palette[0]) },
+            Modifier.size(36.dp).clip(CircleShape).background(Line).clickable { edit(current ?: palette[0]) },
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawLine(Ink, Offset(size.width * .3f, size.height / 2f), Offset(size.width * .7f, size.height / 2f), strokeWidth = 3f)
@@ -1178,11 +1200,11 @@ private fun ArtboardPanel(ed: Editor) {
         Label("Artboards")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ed.boards.forEachIndexed { i, b ->
-                FilterChip(i == ed.activeBoard, { ed.selectBoard(i) }, { Text(b.name, fontSize = 12.sp) })
+                Chip(i == ed.activeBoard, { ed.selectBoard(i) }, { Text(b.name, fontSize = 12.sp) })
             }
-            FilterChip(false, { ed.addBoard(w, h) }, { Text("Add artboard", fontSize = 12.sp) })
-            FilterChip(false, { ed.fitAll() }, { Text("Show all", fontSize = 12.sp) })
-            if (ed.boards.size > 1) FilterChip(false, { ed.removeBoard(ed.activeBoard) }, { Text("Delete this one", fontSize = 12.sp) })
+            Chip(false, { ed.addBoard(w, h) }, { Text("Add artboard", fontSize = 12.sp) })
+            Chip(false, { ed.fitAll() }, { Text("Show all", fontSize = 12.sp) })
+            if (ed.boards.size > 1) Chip(false, { ed.removeBoard(ed.activeBoard) }, { Text("Delete this one", fontSize = 12.sp) })
         }
         Label("Size of the selected artboard")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1190,7 +1212,7 @@ private fun ArtboardPanel(ed: Editor) {
                 "Square" to (1000f to 1000f), "Landscape" to (1600f to 900f), "Portrait" to (900f to 1600f),
                 "Banner" to (1500f to 500f), "App icon" to (512f to 512f),
             ).forEach { (name, size) ->
-                FilterChip(w == size.first && h == size.second, { ed.setArtboard(size.first, size.second); ed.fitView() }, { Text(name, fontSize = 12.sp) })
+                Chip(w == size.first && h == size.second, { ed.setArtboard(size.first, size.second); ed.fitView() }, { Text(name, fontSize = 12.sp) })
             }
         }
         SliderRow("Width", w, 100f..4000f, 0, ed::fitView) { ed.setArtboard(it, h) }
@@ -1205,7 +1227,7 @@ private fun SketchPanel(ed: Editor) {
     ed.version
     PanelBox {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(ed.sketchSnap, { ed.sketchSnap = !ed.sketchSnap }, { Text("Straighten shapes", fontSize = 12.sp) })
+            Chip(ed.sketchSnap, { ed.sketchSnap = !ed.sketchSnap }, { Text("Straighten shapes", fontSize = 12.sp) })
         }
         Label(
             ed.sketchNote?.let { "Recognised: $it. If that is not what you meant, undo, or turn Straighten off to only smooth your line." }
@@ -1252,9 +1274,9 @@ private fun StylePanel(ed: Editor) {
         Label("Fill")
         val grad = first.gradient
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(grad == null, { ed.setFillType(null) }, { Text("Solid", fontSize = 12.sp) })
-            FilterChip(grad?.kind == GKind.LINEAR, { ed.setFillType(GKind.LINEAR) }, { Text("Linear", fontSize = 12.sp) })
-            FilterChip(grad?.kind == GKind.RADIAL, { ed.setFillType(GKind.RADIAL) }, { Text("Radial", fontSize = 12.sp) })
+            Chip(grad == null, { ed.setFillType(null) }, { Text("Solid", fontSize = 12.sp) })
+            Chip(grad?.kind == GKind.LINEAR, { ed.setFillType(GKind.LINEAR) }, { Text("Linear", fontSize = 12.sp) })
+            Chip(grad?.kind == GKind.RADIAL, { ed.setFillType(GKind.RADIAL) }, { Text("Radial", fontSize = 12.sp) })
         }
         if (grad == null) {
             ColorRow(first.fill, true) { ed.setFill(it) }
@@ -1271,9 +1293,9 @@ private fun StylePanel(ed: Editor) {
         if (first.stroke != null) {
             Label("Stroke style")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Solid", "Dashed", "Dotted").forEachIndexed { i, n -> FilterChip(first.dash == i, { ed.setDash(i) }, { Text(n, fontSize = 12.sp) }) }
-                listOf("Round ends", "Flat ends", "Square ends").forEachIndexed { i, n -> FilterChip(first.cap == i, { ed.setCap(i) }, { Text(n, fontSize = 12.sp) }) }
-                listOf("Round joins", "Sharp joins", "Bevel joins").forEachIndexed { i, n -> FilterChip(first.join == i, { ed.setJoin(i) }, { Text(n, fontSize = 12.sp) }) }
+                listOf("Solid", "Dashed", "Dotted").forEachIndexed { i, n -> Chip(first.dash == i, { ed.setDash(i) }, { Text(n, fontSize = 12.sp) }) }
+                listOf("Round ends", "Flat ends", "Square ends").forEachIndexed { i, n -> Chip(first.cap == i, { ed.setCap(i) }, { Text(n, fontSize = 12.sp) }) }
+                listOf("Round joins", "Sharp joins", "Bevel joins").forEachIndexed { i, n -> Chip(first.join == i, { ed.setJoin(i) }, { Text(n, fontSize = 12.sp) }) }
             }
         }
         SliderRow("Opacity %", first.opacity * 100f, 0f..100f, 0, ed::endSlide) { ed.setOpacity(it / 100f) }
@@ -1324,10 +1346,10 @@ private fun TextPanel(ed: Editor) {
         Label("Font")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextLayout.FONTS.forEachIndexed { i, f ->
-                FilterChip(spec.font == i, { ed.setFont(i) }, { Text(f.second, fontSize = 12.sp) })
+                Chip(spec.font == i, { ed.setFont(i) }, { Text(f.second, fontSize = 12.sp) })
             }
-            FilterChip(spec.bold, { ed.setBold(!spec.bold) }, { Text("Bold", fontSize = 12.sp) })
-            FilterChip(spec.italic, { ed.setItalic(!spec.italic) }, { Text("Italic", fontSize = 12.sp) })
+            Chip(spec.bold, { ed.setBold(!spec.bold) }, { Text("Bold", fontSize = 12.sp) })
+            Chip(spec.italic, { ed.setItalic(!spec.italic) }, { Text("Italic", fontSize = 12.sp) })
         }
         SliderRow("Size", spec.size, 20f..400f, 0, ed::endSlide) { ed.setTextSize(it) }
         Label("Layout")
@@ -1343,7 +1365,7 @@ private fun TextPanel(ed: Editor) {
             Label("Warp")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (w in Warp.values()) {
-                    FilterChip(spec.warp == w, { ed.setWarp(w) }, { Text(w.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 12.sp) })
+                    Chip(spec.warp == w, { ed.setWarp(w) }, { Text(w.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 12.sp) })
                 }
             }
             if (spec.warp != Warp.NONE) SliderRow("Bend", spec.amount * 100f, -100f..100f, 0, ed::endSlide) { ed.setWarpAmount(it / 100f) }
@@ -1383,8 +1405,8 @@ private fun TracePanel(ed: Editor, onPick: () -> Unit) {
     PanelBox {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Choose image", true, onPick)
-            FilterChip(ed.traceInvert, { ed.tuneInvert(!ed.traceInvert) }, { Text("Invert", fontSize = 12.sp) })
-            FilterChip(ed.traceSmooth, { ed.tuneSmooth(!ed.traceSmooth) }, { Text("Smooth curves", fontSize = 12.sp) })
+            Chip(ed.traceInvert, { ed.tuneInvert(!ed.traceInvert) }, { Text("Invert", fontSize = 12.sp) })
+            Chip(ed.traceSmooth, { ed.tuneSmooth(!ed.traceSmooth) }, { Text("Smooth curves", fontSize = 12.sp) })
         }
         if (ed.trace == null) {
             Hint("Pick a logo, sketch or photo to turn its dark areas into a vector shape")
@@ -1424,10 +1446,10 @@ private fun NodesPanel(ed: Editor) {
 private fun GridPanel(ed: Editor) {
     PanelBox {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(ed.showGrid, { ed.showGrid = !ed.showGrid }, { Text("Show grid", fontSize = 12.sp) })
-            FilterChip(ed.snapGrid, { ed.snapGrid = !ed.snapGrid }, { Text("Snap to grid", fontSize = 12.sp) })
-            FilterChip(ed.snapObjects, { ed.snapObjects = !ed.snapObjects }, { Text("Snap to objects", fontSize = 12.sp) })
-            FilterChip(ed.showRulers, { ed.showRulers = !ed.showRulers }, { Text("Rulers", fontSize = 12.sp) })
+            Chip(ed.showGrid, { ed.showGrid = !ed.showGrid }, { Text("Show grid", fontSize = 12.sp) })
+            Chip(ed.snapGrid, { ed.snapGrid = !ed.snapGrid }, { Text("Snap to grid", fontSize = 12.sp) })
+            Chip(ed.snapObjects, { ed.snapObjects = !ed.snapObjects }, { Text("Snap to objects", fontSize = 12.sp) })
+            Chip(ed.showRulers, { ed.showRulers = !ed.showRulers }, { Text("Rulers", fontSize = 12.sp) })
         }
         SliderRow("Grid size", ed.gridSize, 10f..100f, 8, {}) { ed.gridSize = it }
         Hint("Drag a guide off the canvas to remove it")
@@ -1504,7 +1526,7 @@ private fun LayersPanel(ed: Editor) {
                         .size(20.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color(item.fill ?: item.stroke ?: 0xFF9CA3AF.toInt()))
-                        .border(1.dp, Line, RoundedCornerShape(4.dp)),
+                        .then(if (isPale(item.fill ?: item.stroke ?: 0)) Modifier.border(1.dp, Line, RoundedCornerShape(4.dp)) else Modifier),
                 )
                 Text(
                     if (unit.size > 1) "Group of ${unit.size} shapes" else item.label(),
@@ -1610,7 +1632,7 @@ private fun NumField(label: String, value: Float, modifier: Modifier, clearAfter
 
 @Composable
 private fun Act(label: String, enabled: Boolean, onClick: () -> Unit) {
-    OutlinedButton(onClick, Modifier.pressScale(), enabled = enabled, contentPadding = PaddingValues(horizontal = 12.dp)) {
+    TextButton(onClick, Modifier.pressScale(), enabled = enabled, contentPadding = PaddingValues(horizontal = 12.dp)) {
         Text(label, fontSize = 12.sp)
     }
 }
