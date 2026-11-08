@@ -749,7 +749,7 @@ private val dialGroups = listOf(
         "Shapes",
         listOf(
             tool(G.Rect, "Rectangle", Tool.RECT), tool(G.Oval, "Oval", Tool.ELLIPSE), tool(G.Polygon, "Polygon", Tool.POLYGON),
-            tool(G.Star, "Star", Tool.STAR), tool(G.Line, "Line", Tool.LINE), panel(G.Library, "Library", Panel.ICONS),
+            tool(G.Star, "Star", Tool.STAR), tool(G.Line, "Line", Tool.LINE),
         ),
     ),
     DialGroup("Draw", listOf(tool(G.Pen, "Pen", Tool.PEN), tool(G.Sketch, "Sketch", Tool.SKETCH), tool(G.Text, "Text", Tool.TEXT))),
@@ -769,7 +769,7 @@ private val dialGroups = listOf(
         "Board",
         listOf(panel(G.Artboard, "Canvas", Panel.ARTBOARD), panel(G.Grid, "Grid", Panel.GRID), panel(G.Eye, "Preview", Panel.PREVIEW)),
     ),
-    DialGroup("Trace", listOf(panel(G.Trace, "Trace", Panel.TRACE))),
+    DialGroup("Assets", listOf(panel(G.Library, "Shapes library", Panel.ICONS), panel(G.Trace, "Trace", Panel.TRACE))),
 )
 
 private class DialRow(val g: G, val label: String, val active: Boolean, val faded: Boolean = false, val small: Boolean = false, val onClick: () -> Unit)
