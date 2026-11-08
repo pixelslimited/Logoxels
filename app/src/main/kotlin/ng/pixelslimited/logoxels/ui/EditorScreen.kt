@@ -91,6 +91,7 @@ import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -398,7 +399,7 @@ fun EditorScreen(ed: Editor) {
         }
         // old and new panels overlap while they swap
         val hostKey: Any = when (ed.tool) {
-            Tool.CORNERS, Tool.PEN, Tool.KNIFE, Tool.NODES, Tool.SCISSORS, Tool.TEXT, Tool.EYEDROPPER, Tool.SKETCH -> ed.tool
+            Tool.CORNERS, Tool.PEN, Tool.KNIFE, Tool.NODES, Tool.SCISSORS, Tool.TEXT, Tool.EYEDROPPER, Tool.SKETCH, Tool.BUILDER -> ed.tool
             else -> panel
         }
         AnimatedContent(
@@ -418,6 +419,7 @@ fun EditorScreen(ed: Editor) {
                 Tool.TEXT -> TextPanel(ed)
                 Tool.EYEDROPPER -> EyedropperPanel()
                 Tool.SKETCH -> SketchPanel(ed)
+                Tool.BUILDER -> BuilderPanel(ed)
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
                 Panel.TRANSFORM -> TransformPanel(ed)
@@ -441,6 +443,7 @@ private fun EditorCanvas(ed: Editor) {
     val artPaint = remember { APaint().apply { color = android.graphics.Color.WHITE } }
     val namePaint = remember { APaint().apply { isAntiAlias = true; isFakeBoldText = true } }
     val frame = remember { APaint().apply { style = APaint.Style.STROKE } }
+    val hot = remember { APaint().apply { isAntiAlias = true; style = APaint.Style.FILL } }
     val gridPaint = remember {
         APaint().apply {
             color = android.graphics.Color.argb(60, 17, 24, 39)
@@ -711,6 +714,17 @@ private fun EditorCanvas(ed: Editor) {
             }
             drawPath(route, Accent, style = Stroke(width = 5f))
         }
+        if (ed.builderHot.isNotEmpty()) {
+            hot.color = (if (ed.builderErase) Color(0xFFEF4444) else Accent).copy(alpha = 0.45f).toArgb()
+            drawIntoCanvas { c ->
+                val n = c.nativeCanvas
+                n.save()
+                n.translate(ed.tx, ed.ty)
+                n.scale(ed.scale, ed.scale)
+                for (p in ed.builderHot) n.drawPath(p, hot)
+                n.restore()
+            }
+        }
         ed.knife?.let { (a, b) ->
             val sa = ed.toScreen(a.x, a.y)
             val sb = ed.toScreen(b.x, b.y)
@@ -786,7 +800,7 @@ private val dialGroups = listOf(
         "Edit",
         listOf(
             tool(G.Nodes, "Nodes", Tool.NODES), tool(G.Corner, "Corners", Tool.CORNERS),
-            tool(G.Scissors, "Scissors", Tool.SCISSORS), tool(G.Knife, "Knife", Tool.KNIFE),
+            tool(G.Scissors, "Scissors", Tool.SCISSORS), tool(G.Knife, "Knife", Tool.KNIFE), tool(G.Builder, "Builder", Tool.BUILDER),
         ),
     ),
     DialGroup("Paint", listOf(panel(G.Style, "Style", Panel.STYLE), tool(G.Eyedropper, "Eyedrop", Tool.EYEDROPPER))),
@@ -1321,6 +1335,25 @@ private fun PenPanel(ed: Editor) {
             Act("Undo point", n >= 1) { ed.penUndoPoint() }
             Act("Cancel", n >= 1) { ed.penCancel() }
         }
+    }
+}
+
+@Composable
+private fun BuilderPanel(ed: Editor) {
+    ed.version
+    val usable = ed.selectedItems().count { it.fill != null && it.image == null }
+    PanelBox {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip(!ed.builderErase, { ed.builderErase = false }, { Text("Merge", fontSize = 12.sp) })
+            Chip(ed.builderErase, { ed.builderErase = true }, { Text("Erase", fontSize = 12.sp) })
+        }
+        Hint(
+            when {
+                usable < 2 -> "Select two or more overlapping shapes first"
+                ed.builderErase -> "Drag across regions to delete them"
+                else -> "Drag across regions to merge them, tap one to break it out"
+            },
+        )
     }
 }
 

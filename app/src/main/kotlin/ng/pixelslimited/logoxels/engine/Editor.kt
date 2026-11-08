@@ -31,10 +31,10 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT, EYEDROPPER, SKETCH }
+enum class Tool { SELECT, RECT, ELLIPSE, POLYGON, STAR, LINE, CORNERS, PEN, KNIFE, NODES, SCISSORS, TEXT, EYEDROPPER, SKETCH, BUILDER }
 enum class PfOp { UNION, MINUS_FRONT, INTERSECT, EXCLUDE }
 enum class AlignTo { LEFT, CENTER, RIGHT, TOP, MIDDLE, BOTTOM }
-enum class Mode { NONE, CREATE, MOVE, RESIZE, BOARD, SKEW_X, SKEW_Y, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE, SKETCH }
+enum class Mode { NONE, CREATE, MOVE, RESIZE, BOARD, SKEW_X, SKEW_Y, TRANSFORM, PICK, PEN, KNIFE, NODE, ROTATE, GUIDE, SKETCH, BUILDER }
 
 /** A pen-tool point with its two Bezier handles (equal to [p] when the point is a sharp corner). */
 class Anchor(val p: Offset, val hin: Offset, val hout: Offset)
@@ -613,6 +613,7 @@ class Editor {
                 knife = downDoc to downDoc
                 return Mode.KNIFE
             }
+            Tool.BUILDER -> if (builderStart()) return Mode.BUILDER
             Tool.SELECT -> Unit
             else -> {
                 downDoc = snapPoint(downDoc, emptySet())
@@ -746,6 +747,7 @@ class Editor {
                 pen = pen.dropLast(1) + Anchor(a.p, Offset(2f * a.p.x - doc.x, 2f * a.p.y - doc.y), doc)
             }
             Mode.KNIFE -> knife = downDoc to doc
+            Mode.BUILDER -> builderDrag(doc)
             Mode.SKETCH -> {
                 sketchPts.add(doc)
                 touch()
@@ -777,6 +779,7 @@ class Editor {
             }
             Mode.PEN -> if (penClosing && !moved) penFinish(true)
             Mode.SKETCH -> finishSketch(moved)
+            Mode.BUILDER -> builderFinish()
             Mode.KNIFE -> {
                 val k = knife
                 knife = null
@@ -1266,20 +1269,84 @@ class Editor {
                 }.getFillPath(src, band)
                 val result = Path(src)
                 result.op(band, if (d > 0f) Path.Op.UNION else Path.Op.DIFFERENCE)
-                val moved = Item(nextId++, Kind.PATH, result, RectF(), item.fill, item.stroke, item.strokeWidth).also {
-                    it.gradient = item.gradient?.copy()
-                    it.opacity = item.opacity
-                    it.groupId = item.groupId
-                    it.dash = item.dash
-                    it.cap = item.cap
-                    it.join = item.join
-                    it.visible = item.visible
-                    it.locked = item.locked
-                }
+                val moved = pathItem(item, result)
                 picked.add(moved.id)
                 moved
             }
             selection = picked
+        }
+    }
+
+    /** A new plain path shape that takes the look of [src]. */
+    private fun pathItem(src: Item, path: Path): Item = Item(nextId++, Kind.PATH, path, RectF(), src.fill, src.stroke, src.strokeWidth).also {
+        it.gradient = src.gradient?.copy()
+        it.opacity = src.opacity
+        it.groupId = src.groupId
+        it.dash = src.dash
+        it.cap = src.cap
+        it.join = src.join
+        it.visible = src.visible
+        it.locked = src.locked
+    }
+
+    // ---------- shape builder ----------
+    /** True to delete the regions you drag across; false to merge them. */
+    var builderErase by mutableStateOf(false)
+
+    /** Regions touched so far in the current drag, for the highlight. */
+    var builderHot by mutableStateOf<List<Path>>(emptyList())
+        private set
+    private var faces: List<Face> = emptyList()
+    private var regions: List<Region> = emptyList()
+    private var builderIds: Set<Long> = emptySet()
+    private val touched = LinkedHashSet<Int>()
+
+    /** Splits the selected filled shapes into regions; false when fewer than two are selected (the tool then just selects). */
+    private fun builderStart(): Boolean {
+        val src = selectedItems().filter { it.fill != null && it.image == null }
+        if (src.size < 2) return false
+        faces = Faces.of(src)
+        regions = faces.map { Faces.region(it.path) }
+        builderIds = src.map { it.id }.toSet()
+        touched.clear()
+        builderTouch(downDoc)
+        return true
+    }
+
+    private fun builderTouch(p: Offset) {
+        val i = regions.indexOfFirst { it.contains(p.x.roundToInt(), p.y.roundToInt()) }
+        if (i >= 0 && touched.add(i)) {
+            builderHot = touched.map { faces[it].path }
+            touch()
+        }
+    }
+
+    private fun builderDrag(doc: Offset) {
+        val steps = max(1, ((doc - lastDoc).getDistance() * scale / 4f).toInt())
+        for (k in 1..steps) builderTouch(lastDoc + (doc - lastDoc) * (k.toFloat() / steps))
+    }
+
+    /** Merges the touched regions into one shape (a tap on a single region breaks it out), or deletes them in erase mode. */
+    private fun builderFinish() {
+        val hit = touched.toList()
+        val all = faces
+        touched.clear()
+        builderHot = emptyList()
+        faces = emptyList()
+        regions = emptyList()
+        if (hit.isEmpty() || all.isEmpty()) { touch(); return }
+        change {
+            val out = ArrayList<Item>()
+            if (!builderErase) {
+                val joined = Path(all[hit[0]].path)
+                for (k in 1 until hit.size) joined.op(all[hit[k]].path, Path.Op.UNION)
+                out.add(pathItem(all[hit[0]].source, joined))
+            }
+            all.forEachIndexed { i, f -> if (i !in hit) out.add(pathItem(f.source, f.path)) }
+            val at = items.indexOfFirst { it.id in builderIds }.coerceAtLeast(0)
+            val rest = items.filter { it.id !in builderIds }
+            items = rest.take(at) + out + rest.drop(at)
+            selection = out.map { it.id }.toSet()
         }
     }
 
