@@ -393,7 +393,11 @@ fun EditorScreen(ed: Editor) {
                     }
                 },
             ) { EditorCanvas(ed) }
-            QuickBar(ed, Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp))
+            QuickBar(
+                ed, Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp),
+                onStyle = { panel = Panel.STYLE },
+                onVectorize = { if (ed.vectorize()) panel = Panel.TRACE },
+            )
             BoardBar(ed, Modifier.align(Alignment.TopCenter))
             ToolDial(ed, panel) { panel = if (panel == it) Panel.NONE else it }
         }
@@ -1823,7 +1827,7 @@ private fun QDivider() {
 
 /** Shown after a double-tap on a shape; stays while anything is selected. */
 @Composable
-private fun QuickBar(ed: Editor, modifier: Modifier) {
+private fun QuickBar(ed: Editor, modifier: Modifier, onStyle: () -> Unit, onVectorize: () -> Unit) {
     ed.version
     val n = ed.selection.size
     val show = ed.quickOn && n > 0 && ed.tool == Tool.SELECT
@@ -1884,6 +1888,9 @@ private fun QuickBar(ed: Editor, modifier: Modifier) {
                 }
             }
             QPill {
+                if (ed.textInSelection() != null) QBtn(G.Text, "Edit text") { ed.tool = Tool.TEXT }
+                if (ed.selectedItems().singleOrNull()?.image != null) QBtn(G.Trace, "Vectorize", onClick = onVectorize)
+                QBtn(G.Style, "Style", onClick = onStyle)
                 QBtn(G.AlignL, "Align", active = open == "align") { pick("align") }
                 QBtn(G.Move, "Nudge", active = open == "nudge") { pick("nudge") }
                 QBtn(G.RotR, "Rotate", active = open == "rotate") { pick("rotate") }

@@ -1429,6 +1429,14 @@ class Editor {
         private set
     private var traceItem = 0L
 
+    /** Loads the single selected imported picture into the tracer so the vector lands exactly over it; false when none is selected. */
+    fun vectorize(): Boolean {
+        val item = selectedItems().singleOrNull() ?: return false
+        val pic = item.image ?: return false
+        traceLoad(ImageLoad.fromBitmap(pic.bitmap, Matrix(item.imgM)))
+        return true
+    }
+
     fun traceLoad(src: TraceSource) {
         trace = src
         traceItem = 0L
@@ -1458,10 +1466,16 @@ class Editor {
         val thr = traceThreshold.toInt()
         val inv = traceInvert
         val loops = Trace.loops(src.w, src.h, if (traceSmooth) 1.3 else 0.9) { x, y -> (src.gray[y * src.w + x] < thr) != inv }
-        val k = 0.8f * min(artboard.width() / src.w, artboard.height() / src.h)
-        val ox = (artboard.width() - src.w * k) / 2f
-        val oy = (artboard.height() - src.h * k) / 2f
-        val placed = loops.map { loop -> loop.map { P(ox + it.x * k, oy + it.y * k) } }
+        val place = src.place
+        val placed = if (place != null) {
+            val v = FloatArray(2)
+            loops.map { loop -> loop.map { v[0] = it.x.toFloat(); v[1] = it.y.toFloat(); place.mapPoints(v); P(v[0].toDouble(), v[1].toDouble()) } }
+        } else {
+            val k = 0.8f * min(artboard.width() / src.w, artboard.height() / src.h)
+            val ox = (artboard.width() - src.w * k) / 2f
+            val oy = (artboard.height() - src.h * k) / 2f
+            loops.map { loop -> loop.map { P(ox + it.x * k, oy + it.y * k) } }
+        }
         val p = if (traceSmooth) {
             PathBridge.toPath(placed.map { Trace.smoothContour(it) })
         } else {
