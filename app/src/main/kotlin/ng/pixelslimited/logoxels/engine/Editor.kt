@@ -183,7 +183,8 @@ class Editor {
 
     /** Quick-access bar: opened by double-tapping a shape, closed once nothing is selected. */
     var quickOn by mutableStateOf(false)
-    var lockRatio by mutableStateOf(false)
+    /** Keeps width and height in proportion when drawing and resizing; on until switched off. */
+    var lockRatio by mutableStateOf(true)
     var nextFill by mutableIntStateOf(0xFF1E88E5.toInt())
         private set
     /** Corner number picked with the Corners tool (see Rounder.nodes). */
@@ -1530,7 +1531,15 @@ class Editor {
         if (c.kind == Kind.PATH) {
             c.path = Path().apply { moveTo(downDoc.x, downDoc.y); lineTo(doc.x, doc.y) }
         } else {
-            c.bounds = RectF(min(downDoc.x, doc.x), min(downDoc.y, doc.y), max(downDoc.x, doc.x), max(downDoc.y, doc.y))
+            var ex = doc.x
+            var ey = doc.y
+            if (lockRatio) {
+                // a square box, so ovals come out as circles and polygons and stars stay regular
+                val side = max(abs(ex - downDoc.x), abs(ey - downDoc.y))
+                ex = downDoc.x + if (ex >= downDoc.x) side else -side
+                ey = downDoc.y + if (ey >= downDoc.y) side else -side
+            }
+            c.bounds = RectF(min(downDoc.x, ex), min(downDoc.y, ey), max(downDoc.x, ex), max(downDoc.y, ey))
             c.rebuild()
         }
         touch()
@@ -1601,6 +1610,14 @@ class Editor {
     fun setFill(c: Int?) {
         if (c != null) nextFill = c
         if (selection.isNotEmpty()) change { selectedItems().forEach { it.fill = c; it.gradient = null } }
+    }
+
+    /** Uses a colour taken from a picture: for new shapes, and as the fill of any selected shape that is not a picture. */
+    fun useColor(c: Int) {
+        nextFill = c
+        if (selectedItems().any { it.image == null }) {
+            change { selectedItems().forEach { if (it.image == null) { it.fill = c; it.gradient = null } } }
+        }
     }
 
     fun setStroke(c: Int?) {

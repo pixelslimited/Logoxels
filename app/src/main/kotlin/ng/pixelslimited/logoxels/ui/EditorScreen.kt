@@ -749,7 +749,7 @@ private val dialGroups = listOf(
         "Shapes",
         listOf(
             tool(G.Rect, "Rectangle", Tool.RECT), tool(G.Oval, "Oval", Tool.ELLIPSE), tool(G.Polygon, "Polygon", Tool.POLYGON),
-            tool(G.Star, "Star", Tool.STAR), tool(G.Line, "Line", Tool.LINE),
+            tool(G.Star, "Star", Tool.STAR), tool(G.Line, "Line", Tool.LINE), panel(G.Library, "Library", Panel.ICONS),
         ),
     ),
     DialGroup("Draw", listOf(tool(G.Pen, "Pen", Tool.PEN), tool(G.Sketch, "Sketch", Tool.SKETCH), tool(G.Text, "Text", Tool.TEXT))),
@@ -769,7 +769,7 @@ private val dialGroups = listOf(
         "Board",
         listOf(panel(G.Artboard, "Canvas", Panel.ARTBOARD), panel(G.Grid, "Grid", Panel.GRID), panel(G.Eye, "Preview", Panel.PREVIEW)),
     ),
-    DialGroup("Assets", listOf(panel(G.Library, "Library", Panel.ICONS), panel(G.Trace, "Trace", Panel.TRACE))),
+    DialGroup("Trace", listOf(panel(G.Trace, "Trace", Panel.TRACE))),
 )
 
 private class DialRow(val g: G, val label: String, val active: Boolean, val faded: Boolean = false, val small: Boolean = false, val onClick: () -> Unit)
@@ -1108,6 +1108,13 @@ private fun StylePanel(ed: Editor) {
             Label("Select a shape to change its fill, stroke and corners.")
             return@PanelBox
         }
+        val pic = sel.firstNotNullOfOrNull { it.image }
+        if (pic != null) {
+            Label("Colours in this picture (tap to use)")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (c in pic.palette) Swatch(c, false) { ed.useColor(c) }
+            }
+        }
         Label("Fill")
         val grad = first.gradient
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1214,17 +1221,22 @@ private fun TextPanel(ed: Editor) {
 
 @Composable
 private fun IconsPanel(ed: Editor) {
-    val icons = remember { Icons.all.map { (name, d) -> Triple(name, d, Icons.path(d).asComposePath()) } }
+    val sections = remember {
+        Icons.sections.map { (title, list) -> title to list.map { (name, d) -> Triple(name, d, Icons.path(d).asComposePath()) } }
+    }
     PanelBox {
         Label("Tap a shape to add it. Colour, round, cut and combine it like any other shape.")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((name, d, path) in icons) {
-                Column(
-                    Modifier.width(68.dp).clip(RoundedCornerShape(12.dp)).clickable { ed.insertIcon(d) }.padding(6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Canvas(Modifier.size(40.dp)) { scale(size.width / 100f, Offset.Zero) { drawPath(path, Ink) } }
-                    Text(name, fontSize = 12.sp, color = Ink)
+        for ((title, icons) in sections) {
+            Text(title, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((name, d, path) in icons) {
+                    Column(
+                        Modifier.width(68.dp).clip(RoundedCornerShape(12.dp)).clickable { ed.insertIcon(d) }.padding(6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Canvas(Modifier.size(40.dp)) { scale(size.width / 100f, Offset.Zero) { drawPath(path, Ink) } }
+                        Text(name, fontSize = 12.sp, color = Ink)
+                    }
                 }
             }
         }
