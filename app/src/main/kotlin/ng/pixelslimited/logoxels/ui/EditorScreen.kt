@@ -108,6 +108,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ng.pixelslimited.logoxels.engine.AlignTo
+import ng.pixelslimited.logoxels.engine.Doc
 import ng.pixelslimited.logoxels.engine.Editor
 import ng.pixelslimited.logoxels.engine.Export
 import ng.pixelslimited.logoxels.engine.GKind
@@ -136,7 +137,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.OutputStream
 
-private enum class FileOp { IMPORT, OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
+private enum class FileOp { NEW, IMPORT, OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
 
 private sealed class Loaded {
     class Pic(val pic: Picture) : Loaded()
@@ -211,6 +212,7 @@ fun EditorScreen(ed: Editor) {
         }
     }
     var pngDialog by remember { mutableStateOf(false) }
+    var newConfirm by remember { mutableStateOf(false) }
     var pngSize by remember { mutableStateOf(2048) }
     var pngClear by remember { mutableStateOf(false) }
     var pngSel by remember { mutableStateOf(false) }
@@ -300,6 +302,20 @@ fun EditorScreen(ed: Editor) {
     }
     var updating by remember { mutableStateOf(false) }
     if (updating) UpdateDialog { updating = false }
+    if (newConfirm) {
+        AlertDialog(
+            onDismissRequest = { newConfirm = false },
+            title = { Text("New project", fontSize = 16.sp) },
+            text = { Text("This clears every artboard and shape. Save the project first if you want to keep it.", fontSize = 12.sp) },
+            confirmButton = {
+                TextButton({
+                    newConfirm = false
+                    ed.loadProject(Doc(emptyList(), 1000f, 1000f, null))
+                }) { Text("Clear and start new", fontSize = 12.sp) }
+            },
+            dismissButton = { TextButton({ newConfirm = false }) { Text("Cancel", fontSize = 12.sp) } },
+        )
+    }
     if (pngDialog) {
         AlertDialog(
             onDismissRequest = { pngDialog = false },
@@ -340,6 +356,7 @@ fun EditorScreen(ed: Editor) {
                 FileOp.SAVE -> projOut.launch(fileBase() + ".logoxels.json")
                 FileOp.IMPORT -> importIn.launch(arrayOf("*/*"))
                 FileOp.OPEN -> projIn.launch(arrayOf("*/*"))
+                FileOp.NEW -> if (ed.items.isEmpty() && ed.boards.size == 1) ed.loadProject(Doc(emptyList(), 1000f, 1000f, null)) else newConfirm = true
             }
         }
         Box(
@@ -678,6 +695,7 @@ private fun EditorCanvas(ed: Editor) {
 @Composable
 private fun TopBar(ed: Editor, onUpdate: () -> Unit, onFile: (FileOp) -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    var exports by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().background(Bar).padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -685,13 +703,18 @@ private fun TopBar(ed: Editor, onUpdate: () -> Unit, onFile: (FileOp) -> Unit) {
         Text("Logoxels", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Ink, modifier = Modifier.weight(1f).padding(start = 4.dp))
         Box {
             TextButton({ menu = true }) { Text("File", fontSize = 12.sp) }
-            DropdownMenu(menu, { menu = false }) {
+            DropdownMenu(menu, { menu = false; exports = false }) {
                 for ((label, op) in listOf(
-                    "Import to board" to FileOp.IMPORT, "Open project" to FileOp.OPEN, "Save project" to FileOp.SAVE,
-                    "Export SVG" to FileOp.SVG, "Export PNG" to FileOp.PNG, "Export PDF" to FileOp.PDF,
-                    "Export PSD (layers)" to FileOp.PSD, "Export EPS" to FileOp.EPS, "Export AI" to FileOp.AI,
+                    "New project" to FileOp.NEW, "Open project" to FileOp.OPEN, "Save project" to FileOp.SAVE, "Import to board" to FileOp.IMPORT,
                 )) {
-                    DropdownMenuItem({ Text(label, fontSize = 14.sp) }, { menu = false; onFile(op) })
+                    DropdownMenuItem({ Text(label, fontSize = 14.sp) }, { menu = false; exports = false; onFile(op) })
+                }
+                DropdownMenuItem({ Text("Export", fontSize = 14.sp, fontWeight = FontWeight.Bold) }, { exports = !exports })
+                if (exports) for ((label, op) in listOf(
+                    "SVG" to FileOp.SVG, "PNG" to FileOp.PNG, "PDF" to FileOp.PDF,
+                    "PSD (layers)" to FileOp.PSD, "EPS" to FileOp.EPS, "AI" to FileOp.AI,
+                )) {
+                    DropdownMenuItem({ Text(label, fontSize = 14.sp, modifier = Modifier.padding(start = 16.dp)) }, { menu = false; exports = false; onFile(op) })
                 }
                 DropdownMenuItem({ Text("Check for updates", fontSize = 14.sp) }, { menu = false; onUpdate() })
             }
