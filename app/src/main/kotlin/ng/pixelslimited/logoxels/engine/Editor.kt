@@ -1183,13 +1183,17 @@ class Editor {
 
     val canPaste: Boolean get() = clip.isNotEmpty()
 
+    /** Top-left of the artboard the copy was taken from, so a paste keeps the same place on whichever artboard is active. */
+    private var clipFrom = Offset.Zero
+
     fun copySelected() {
         val sel = selectedItems()
         if (sel.isEmpty()) return
         clip = sel.map { it.copy() }
+        clipFrom = Offset(artboard.left, artboard.top)
     }
 
-    /** Pastes onto the active artboard: in the same place nudged aside when the copy is already there, else centred on it. */
+    /** Pastes in exactly the place that was copied; on another artboard, in the same place on that artboard. */
     fun paste() {
         if (clip.isEmpty()) return
         val a = artboard
@@ -1198,20 +1202,9 @@ class Editor {
             val copies = clip.map { s ->
                 s.copyWithId(nextId++).also { c ->
                     if (s.groupId != 0L) c.groupId = groupMap.getOrPut(s.groupId) { nextGroup++ }
+                    c.offset(a.left - clipFrom.x, a.top - clipFrom.y)
                 }
             }
-            val box = RectF(copies[0].box())
-            for (c in copies) box.union(c.box())
-            val dx: Float
-            val dy: Float
-            if (a.contains(box.centerX(), box.centerY())) {
-                dx = 24f
-                dy = 24f
-            } else {
-                dx = a.centerX() - box.centerX()
-                dy = a.centerY() - box.centerY()
-            }
-            for (c in copies) c.offset(dx, dy)
             items = items + copies
             selection = copies.map { it.id }.toSet()
             tool = Tool.SELECT
