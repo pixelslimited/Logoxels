@@ -10,6 +10,7 @@ object Render {
     fun draw(canvas: Canvas, items: List<Item>) {
         val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+        val pic = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         for (item in items) {
             if (!item.visible) continue
             val faded = item.opacity < 0.999f
@@ -25,6 +26,13 @@ object Render {
                 fill.shader = item.gradient?.shader(item.box())
                 canvas.drawPath(rp, fill)
                 fill.shader = null
+            }
+            item.image?.let {
+                canvas.save()
+                canvas.clipPath(rp)
+                canvas.concat(item.imgM)
+                canvas.drawBitmap(it.bitmap, 0f, 0f, pic)
+                canvas.restore()
             }
             item.stroke?.let {
                 if (item.strokeWidth > 0f) {

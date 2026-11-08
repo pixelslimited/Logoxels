@@ -434,7 +434,7 @@ class Editor {
                 tb.inset(-tol, -tol)
                 if (tb.contains(d.x, d.y)) return item
             }
-            if (item.fill != null && regionHas(rp, x, y)) return item
+            if ((item.fill != null || item.image != null) && regionHas(rp, x, y)) return item
             val w = when {
                 item.stroke != null -> max(item.strokeWidth, tol * 2f)
                 item.fill == null -> tol * 2f
@@ -823,10 +823,13 @@ class Editor {
 
     /** Points and handles of the single selected shape, for drawing the node overlay. */
     fun nodePaths(): List<NodePath> =
-        selectedItems().singleOrNull()?.let { Nodes.fromContours(PathBridge.toContours(it.path)) } ?: emptyList()
+        nodeItem()?.let { Nodes.fromContours(PathBridge.toContours(it.path)) } ?: emptyList()
+
+    /** The single selected shape when its outline can be edited point by point (pictures cannot). */
+    private fun nodeItem(): Item? = selectedItems().singleOrNull()?.takeIf { it.image == null }
 
     private fun beginNodes(screen: Offset, r: Float): Mode {
-        val item = selectedItems().singleOrNull() ?: return Mode.PICK
+        val item = nodeItem() ?: return Mode.PICK
         val data = Nodes.fromContours(PathBridge.toContours(item.path))
         val sel = nodeSel
         if (sel != null && sel.first in data.indices && sel.second in data[sel.first].nodes.indices) {
@@ -896,7 +899,7 @@ class Editor {
 
     /** Tap with the Nodes tool: add a point on the outline, otherwise select the shape under the finger. */
     private fun nodeTap() {
-        val item = selectedItems().singleOrNull()
+        val item = nodeItem()
         if (item != null) {
             val data = Nodes.fromContours(PathBridge.toContours(item.path))
             val hit = Nodes.nearest(data, P(downDoc.x.toDouble(), downDoc.y.toDouble()))
@@ -918,7 +921,7 @@ class Editor {
     }
 
     private fun editNodes(topology: Boolean, block: (MutableList<NodePath>, Int, Int) -> Unit) {
-        val item = selectedItems().singleOrNull() ?: return
+        val item = nodeItem() ?: return
         val s = nodeSel ?: return
         val data = Nodes.fromContours(PathBridge.toContours(item.path))
         if (s.first !in data.indices || s.second !in data[s.first].nodes.indices) return
@@ -952,7 +955,7 @@ class Editor {
         var bestData: MutableList<NodePath>? = null
         var bestHit: PathHit? = null
         for (item in items) {
-            if (!item.visible || item.locked) continue
+            if (!item.visible || item.locked || item.image != null) continue
             val data = Nodes.fromContours(PathBridge.toContours(item.path))
             val h = Nodes.nearest(data, p) ?: continue
             val cur = bestHit
@@ -1132,6 +1135,58 @@ class Editor {
             val item = Item(nextId++, Kind.PATH, Icons.placed(d, artboard.centerX(), artboard.centerY(), min(artboard.width(), artboard.height()) * 0.3f), RectF(), nextFill, null, 0f)
             items = items + item
             selection = setOf(item.id)
+            tool = Tool.SELECT
+        }
+    }
+
+    // ---------- import ----------
+    private class Spot(val cx: Float, val cy: Float, val room: Float)
+
+    /** Where an imported file lands: [at] (a screen point, from a drop) or the active artboard's centre, nudged by [n] steps. */
+    private fun spot(at: Offset?, n: Int): Spot {
+        val d = at?.let { toDoc(it) }
+        val b = d?.let { p -> boards.firstOrNull { it.rect.contains(p.x, p.y) }?.rect } ?: artboard
+        val step = 24f * n
+        return Spot((d?.x ?: b.centerX()) + step, (d?.y ?: b.centerY()) + step, min(b.width(), b.height()))
+    }
+
+    /** Puts a picture on the board, shrunk to fit when it is large. */
+    fun importPicture(pic: Picture, at: Offset? = null, n: Int = 0) {
+        val sp = spot(at, n)
+        val bw = pic.bitmap.width.toFloat()
+        val bh = pic.bitmap.height.toFloat()
+        val k = min(1f, sp.room * 0.6f / max(bw, bh))
+        val r = RectF(sp.cx - bw * k / 2f, sp.cy - bh * k / 2f, sp.cx + bw * k / 2f, sp.cy + bh * k / 2f)
+        change {
+            val item = Item(nextId++, Kind.RECT, buildShape(Kind.RECT, r, 4, 0.5f), RectF(r), null, null, 0f)
+            item.image = pic
+            item.imgM.setScale(k, k)
+            item.imgM.postTranslate(r.left, r.top)
+            items = items + item
+            selection = setOf(item.id)
+            tool = Tool.SELECT
+        }
+    }
+
+    /** Puts an SVG on the board as editable shapes grouped into one object, sized to 40% of the artboard. */
+    fun importSvg(svg: SvgDoc, at: Offset? = null, n: Int = 0) {
+        val sp = spot(at, n)
+        val k = sp.room * 0.4f / max(svg.w, svg.h)
+        val m = Matrix().apply {
+            setScale(k, k)
+            postTranslate(sp.cx - svg.w * k / 2f, sp.cy - svg.h * k / 2f)
+        }
+        change {
+            val gid = if (svg.shapes.size > 1) nextGroup++ else 0L
+            val made = svg.shapes.map { s ->
+                Item(nextId++, Kind.PATH, Path(s.path).also { it.transform(m) }, RectF(), s.fill, s.stroke, if (s.stroke == null) 0f else s.strokeWidth * k)
+                    .also {
+                        it.groupId = gid
+                        it.opacity = s.opacity
+                    }
+            }
+            items = items + made
+            selection = made.map { it.id }.toSet()
             tool = Tool.SELECT
         }
     }
@@ -1593,7 +1648,7 @@ class Editor {
                 val delta = Matrix(t.clipDelta)
                 val g = src.orig.copy()
                 g.applyFrom(src.orig, delta)
-                t.kind = g.kind; t.path = g.path; t.bounds = g.bounds; t.xf.set(g.xf); t.text = g.text
+                t.kind = g.kind; t.path = g.path; t.bounds = g.bounds; t.xf.set(g.xf); t.text = g.text; t.imgM.set(g.imgM)
                 t.sides = g.sides; t.inner = g.inner; t.corner = g.corner
                 t.cornerR.clear(); t.cornerR.putAll(g.cornerR)
                 t.clipSrc = g.clipSrc; t.clipDelta.set(g.clipDelta)
@@ -1649,14 +1704,14 @@ class Editor {
         if (l) selection = selection - ids
     }
 
-    /** Moves a shape, or a whole group, one step up or down in the layer order. */
-    fun moveLayer(item: Item, up: Boolean) {
+    /** Moves a shape, or a whole group, to position [to] in the layer order (0 is the bottom). */
+    fun moveLayerTo(item: Item, to: Int) {
         val u = layerUnits().toMutableList()
         val i = u.indexOfFirst { l -> l.any { it.id == item.id } }
-        val j = if (up) i + 1 else i - 1
-        if (i < 0 || j !in u.indices) return
+        val j = to.coerceIn(0, u.lastIndex)
+        if (i < 0 || i == j) return
         change {
-            Collections.swap(u, i, j)
+            u.add(j, u.removeAt(i))
             items = u.flatten()
         }
     }

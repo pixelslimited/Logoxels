@@ -24,7 +24,8 @@ import kotlin.math.sin
 
 enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch, Theme,
     AlignL, AlignC, AlignR, AlignT, AlignM, AlignB, RotL, RotR, FlipH, FlipV, ToFront, Forward, Backward, ToBack,
-    Group, Ungroup, Clip, Unclip, DistH, DistV, Dup, SelAll, Trash, Move, Check }
+    Group, Ungroup, Clip, Unclip, DistH, DistV, Dup, SelAll, Trash, Move, Check,
+    Eye, EyeOff, Lock, Unlock, Grip }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -245,6 +246,34 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 drawRect(tint, pt(.14f, .16f), sz(.7f, .18f))
                 drawRect(tint, pt(.14f, .41f), sz(.44f, .18f))
                 drawRect(tint, pt(.14f, .66f), sz(.58f, .18f))
+            }
+            G.Eye, G.EyeOff -> {
+                drawPath(Path().apply {
+                    moveTo(.08f * w, .5f * w)
+                    cubicTo(.28f * w, .18f * w, .72f * w, .18f * w, .92f * w, .5f * w)
+                    cubicTo(.72f * w, .82f * w, .28f * w, .82f * w, .08f * w, .5f * w)
+                    close()
+                }, tint, style = st)
+                drawCircle(tint, w * .13f, pt(.5f, .5f))
+                if (g == G.EyeOff) ln(.18f, .86f, .82f, .14f, .09f)
+            }
+            G.Lock, G.Unlock -> {
+                if (g == G.Lock) bar(.22f, .46f, .56f, .4f) else box(.22f, .46f, .56f, .4f)
+                drawPath(Path().apply {
+                    moveTo(.34f * w, .46f * w)
+                    lineTo(.34f * w, .34f * w)
+                    if (g == G.Lock) {
+                        cubicTo(.34f * w, .06f * w, .66f * w, .06f * w, .66f * w, .34f * w)
+                        lineTo(.66f * w, .46f * w)
+                    } else {
+                        cubicTo(.34f * w, .06f * w, .66f * w, .06f * w, .66f * w, .24f * w)
+                    }
+                }, tint, style = st)
+            }
+            G.Grip -> {
+                for (cx in listOf(.36f, .64f)) {
+                    for (cy in listOf(.24f, .5f, .76f)) drawCircle(tint, w * .07f, pt(cx, cy))
+                }
             }
         }
     }

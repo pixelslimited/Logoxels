@@ -72,6 +72,10 @@ class Item(
     /** Rotation, flip and resize of a live shape: the outline is [bounds] built as a shape, then moved by this. */
     val xf = Matrix()
 
+    /** Set for an imported picture: it is drawn through [imgM] (bitmap pixels to artboard units) and clipped to the outline. */
+    var image: Picture? = null
+    val imgM = Matrix()
+
     /** Set while this shape is trimmed by a clip; [clipDelta] is every move and resize since. */
     var clipSrc: ClipSource? = null
     val clipDelta = Matrix()
@@ -104,6 +108,8 @@ class Item(
                 it.text = text?.copy()
                 it.clipSrc = clipSrc
                 it.clipDelta.set(clipDelta)
+                it.image = image
+                it.imgM.set(imgM)
             }
 
     fun copy() = copyWithId(id)
@@ -131,7 +137,7 @@ class Item(
         }
     }
 
-    fun label(): String = when (kind) {
+    fun label(): String = if (image != null) "Picture $id" else when (kind) {
         Kind.RECT -> "Rectangle"
         Kind.ELLIPSE -> "Oval"
         Kind.POLYGON -> "Polygon"
@@ -159,6 +165,7 @@ class Item(
         path.offset(dx, dy)
         if (parametric) xf.postTranslate(dx, dy)
         if (clipSrc != null) clipDelta.postTranslate(dx, dy)
+        if (image != null) imgM.postTranslate(dx, dy)
         cache?.offset(dx, dy)
     }
 
@@ -177,6 +184,10 @@ class Item(
         if (clipSrc != null) {
             clipDelta.set(orig.clipDelta)
             clipDelta.postConcat(m)
+        }
+        if (image != null) {
+            imgM.set(orig.imgM)
+            imgM.postConcat(m)
         }
     }
 

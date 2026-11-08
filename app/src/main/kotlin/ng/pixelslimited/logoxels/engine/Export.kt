@@ -2,6 +2,7 @@ package ng.pixelslimited.logoxels.engine
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -12,6 +13,7 @@ import ng.pixelslimited.logoxels.engine.geom.PathBridge
 import ng.pixelslimited.logoxels.engine.geom.PathData
 import ng.pixelslimited.logoxels.engine.geom.Seg
 import ng.pixelslimited.logoxels.engine.geom.Warp
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream
@@ -79,6 +81,19 @@ object Export {
             val d = PathData.of(PathBridge.toContours(rp))
             if (d.isEmpty()) continue
             val evenOdd = rp.fillType == Path.FillType.EVEN_ODD || rp.fillType == Path.FillType.INVERSE_EVEN_ODD
+            val pic = item.image
+            if (pic != null) {
+                val cid = "c${item.id}"
+                defs.append("<clipPath id=\"$cid\"><path d=\"$d\"${if (evenOdd) " clip-rule=\"evenodd\"" else ""}/></clipPath>")
+                val v = FloatArray(9)
+                item.imgM.getValues(v)
+                body.append("<g clip-path=\"url(#$cid)\"")
+                if (item.opacity < 0.999f) body.append(" opacity=\"${item.opacity}\"")
+                body.append("><image width=\"${pic.bitmap.width}\" height=\"${pic.bitmap.height}\" preserveAspectRatio=\"none\"")
+                body.append(" transform=\"matrix(${v[0]} ${v[3]} ${v[1]} ${v[4]} ${v[2]} ${v[5]})\"")
+                body.append(" xlink:href=\"data:${pic.mime};base64,${pic.base64}\"/></g>\n")
+                if (item.fill == null && (item.stroke == null || item.strokeWidth <= 0f)) continue
+            }
             val a = StringBuilder("<path d=\"$d\"")
             val fillColor = item.fill
             val g = item.gradient
@@ -114,7 +129,7 @@ object Export {
             if (item.opacity < 0.999f) a.append(" opacity=\"${item.opacity}\"")
             body.append(a).append("/>\n")
         }
-        val head = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${doc.w}\" height=\"${doc.h}\" viewBox=\"0 0 ${doc.w} ${doc.h}\">\n"
+        val head = "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"${doc.w}\" height=\"${doc.h}\" viewBox=\"0 0 ${doc.w} ${doc.h}\">\n"
         val defsTag = if (defs.isEmpty()) "" else "<defs>$defs</defs>\n"
         return head + defsTag + body + "</svg>\n"
     }
@@ -180,6 +195,41 @@ object Export {
     private fun psColors(c1: Int, c2: Int) =
         "/Function << /FunctionType 2 /Domain [0 1] /C0 [${rgb(c1)}] /C1 [${rgb(c2)}] /N 1 >>"
 
+    private const val HEX = "0123456789ABCDEF"
+
+    /** A picture as a clipped PostScript colour image (at most 800 px, transparent areas on white). */
+    private fun epsPicture(item: Item, pic: Picture, path: String, eo: Boolean, h: Double): String {
+        val k = minOf(1f, 800f / maxOf(pic.bitmap.width, pic.bitmap.height))
+        val w = maxOf(1, (pic.bitmap.width * k).roundToInt())
+        val ph = maxOf(1, (pic.bitmap.height * k).roundToInt())
+        val bmp = Bitmap.createScaledBitmap(pic.bitmap, w, ph, true)
+        val px = IntArray(w * ph)
+        bmp.getPixels(px, 0, w, 0, 0, w, ph)
+        if (bmp !== pic.bitmap) bmp.recycle()
+        val hex = StringBuilder(px.size * 6 + px.size / 12 + 2)
+        val shifts = intArrayOf(16, 8, 0)
+        for (i in px.indices) {
+            val c = px[i]
+            val a = c ushr 24
+            for (sh in shifts) {
+                val v = (((c shr sh) and 0xFF) * a + 255 * (255 - a)) / 255
+                hex.append(HEX[v shr 4]).append(HEX[v and 15])
+            }
+            if (i % 12 == 11) hex.append('\n')
+        }
+        // reduced pixels -> artboard -> PostScript (y up), then the unit square the image operator fills -> reduced pixels
+        val m = Matrix(item.imgM)
+        m.preScale(1f / k, 1f / k)
+        m.postConcat(Matrix().apply { setValues(floatArrayOf(1f, 0f, 0f, 0f, -1f, h.toFloat(), 0f, 0f, 1f)) })
+        val c = Matrix().apply { setValues(floatArrayOf(w.toFloat(), 0f, 0f, 0f, -ph.toFloat(), ph.toFloat(), 0f, 0f, 1f)) }
+        c.postConcat(m)
+        val v = FloatArray(9)
+        c.getValues(v)
+        val mat = listOf(v[0], v[3], v[1], v[4], v[2], v[5]).joinToString(" ") { PathData.num(it.toDouble()) }
+        return "gsave newpath $path ${if (eo) "eoclip" else "clip"} newpath [$mat] concat\n" +
+            "$w $ph 8 [$w 0 0 -$ph 0 $ph] currentfile /ASCIIHexDecode filter false 3 colorimage\n$hex>\ngrestore\n"
+    }
+
     /** Encapsulated PostScript (level 3). Transparency is not supported by EPS, so alpha is ignored. */
     fun eps(doc: Doc): String {
         val w = ceil(doc.w.toDouble()).toInt()
@@ -193,6 +243,8 @@ object Export {
             if (path.isEmpty()) continue
             val eo = rp.fillType == Path.FillType.EVEN_ODD || rp.fillType == Path.FillType.INVERSE_EVEN_ODD
             val g = item.gradient
+            if (item.fill != null && g == null) sb.append("${rgb(item.fill!!)} setrgbcolor newpath $path ${if (eo) "eofill" else "fill"}\n")
+            item.image?.let { sb.append(epsPicture(item, it, path, eo, h)) }
             if (item.fill != null && g != null) {
                 val v = g.geometry(item.box())
                 sb.append("gsave newpath $path ${if (eo) "eoclip" else "clip"} newpath\n")
@@ -204,8 +256,6 @@ object Export {
                     sb.append("<< /ShadingType 3 /ColorSpace /DeviceRGB /Coords [$cx $cy 0 $cx $cy ${PathData.num(v[2].toDouble())}] ")
                 }
                 sb.append("${psColors(g.c1, g.c2)} /Extend [true true] >> shfill grestore\n")
-            } else if (item.fill != null) {
-                sb.append("${rgb(item.fill!!)} setrgbcolor newpath $path ${if (eo) "eofill" else "fill"}\n")
             }
             val sc = item.stroke
             if (sc != null && item.strokeWidth > 0f) {
@@ -295,6 +345,10 @@ object Export {
                 o.put("gradient", JSONObject().put("kind", g.kind.name).put("c1", g.c1).put("c2", g.c2).put("angle", g.angle.toDouble()))
             }
             it.text?.let { t -> o.put("text", textJson(t)) }
+            it.image?.let { pic ->
+                o.put("image", pic.base64)
+                o.put("imgM", JSONArray().apply { val v = FloatArray(9); it.imgM.getValues(v); v.forEach { f -> put(f.toDouble()) } })
+            }
             arr.put(o)
         }
         val boards = JSONArray()
@@ -332,6 +386,10 @@ object Export {
                 item.xf.setValues(FloatArray(9) { k -> a.getDouble(k).toFloat() })
             }
             o.optJSONObject("text")?.let { item.text = textFrom(it) }
+            o.optString("image").takeIf { it.isNotEmpty() }?.let { b64 ->
+                item.image = Picture.restore(Base64.decode(b64, Base64.NO_WRAP))
+                o.optJSONArray("imgM")?.let { a -> item.imgM.setValues(FloatArray(9) { k -> a.getDouble(k).toFloat() }) }
+            }
             item.opacity = o.optDouble("opacity", 1.0).toFloat()
             item.dash = o.optInt("dash", 0)
             item.cap = o.optInt("cap", 0)

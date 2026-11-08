@@ -1,6 +1,7 @@
 package ng.pixelslimited.logoxels.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,6 +15,8 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,6 +54,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
@@ -57,9 +62,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.toAndroidDragEvent
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -73,7 +84,9 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -88,6 +101,9 @@ import ng.pixelslimited.logoxels.engine.ImageLoad
 import ng.pixelslimited.logoxels.engine.Kind
 import ng.pixelslimited.logoxels.engine.Mode
 import ng.pixelslimited.logoxels.engine.PfOp
+import ng.pixelslimited.logoxels.engine.Picture
+import ng.pixelslimited.logoxels.engine.SvgDoc
+import ng.pixelslimited.logoxels.engine.SvgImport
 import ng.pixelslimited.logoxels.engine.Render
 import ng.pixelslimited.logoxels.engine.TextLayout
 import ng.pixelslimited.logoxels.engine.TextMode
@@ -100,11 +116,32 @@ import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.OutputStream
 
-private enum class FileOp { OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
+private enum class FileOp { IMPORT, OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
+
+private sealed class Loaded {
+    class Pic(val pic: Picture) : Loaded()
+    class Svg(val doc: SvgDoc) : Loaded()
+}
+
+/** Reads a picked or dropped file as an SVG or a picture; null when it is neither. Runs off the main thread. */
+private fun readImport(ctx: android.content.Context, u: android.net.Uri): Loaded? {
+    val raw = runCatching { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull() ?: return null
+    if (raw.size > 40_000_000) return null
+    val head = raw.copyOf(minOf(raw.size, 2048)).decodeToString()
+    if (head.contains("<svg", ignoreCase = true)) return SvgImport.parse(raw.decodeToString())?.let { Loaded.Svg(it) }
+    return Picture.decode(raw)?.let { Loaded.Pic(it) }
+}
+
+private tailrec fun android.content.Context.hostActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.hostActivity()
+    else -> null
+}
 
 internal enum class Panel { NONE, STYLE, COMBINE, ARRANGE, LAYERS, GRID, ICONS, TRACE, ARTBOARD }
 
@@ -140,6 +177,7 @@ private fun Autosave(ed: Editor) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun EditorScreen(ed: Editor) {
     var panel by remember { mutableStateOf(Panel.NONE) }
@@ -199,6 +237,45 @@ fun EditorScreen(ed: Editor) {
             }
         }
     }
+    val scope = rememberCoroutineScope()
+    fun importFiles(uris: List<android.net.Uri>, at: Offset?) {
+        scope.launch {
+            var n = 0
+            var bad = 0
+            var skipped = 0
+            for (u in uris) {
+                when (val l = withContext(Dispatchers.IO) { readImport(ctx, u) }) {
+                    is Loaded.Pic -> ed.importPicture(l.pic, at, n++)
+                    is Loaded.Svg -> { ed.importSvg(l.doc, at, n++); skipped += l.doc.skipped }
+                    null -> bad++
+                }
+            }
+            val notes = listOfNotNull(
+                if (bad > 0) "$bad file(s) could not be read" else null,
+                if (skipped > 0) "SVG text, images and gradients are not imported" else null,
+            )
+            if (notes.isNotEmpty()) report(notes.joinToString(". "))
+        }
+    }
+    val importIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { list ->
+        if (list.isNotEmpty()) importFiles(list, null)
+    }
+    var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
+    val dropHold = remember { arrayOfNulls<Any>(1) }
+    val dropTarget = remember {
+        object : DragAndDropTarget {
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                val de = event.toAndroidDragEvent()
+                val clip = de.clipData ?: return false
+                val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+                if (uris.isEmpty()) return false
+                // keep the read permission for as long as this screen lives; the files are read after this call returns
+                dropHold[0] = ctx.hostActivity()?.requestDragAndDropPermissions(de)
+                importFiles(uris, Offset(de.x - canvasOrigin.x, de.y - canvasOrigin.y))
+                return true
+            }
+        }
+    }
     var updating by remember { mutableStateOf(false) }
     if (updating) UpdateDialog { updating = false }
     Column(Modifier.fillMaxSize().background(Back).safeDrawingPadding()) {
@@ -211,10 +288,17 @@ fun EditorScreen(ed: Editor) {
                 FileOp.EPS -> epsOut.launch("logo.eps")
                 FileOp.AI -> aiOut.launch("logo.ai")
                 FileOp.SAVE -> projOut.launch("logo.logoxels.json")
+                FileOp.IMPORT -> importIn.launch(arrayOf("*/*"))
                 FileOp.OPEN -> projIn.launch(arrayOf("*/*"))
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .onGloballyPositioned { canvasOrigin = it.positionInRoot() }
+                .dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget),
+        ) {
             EditorCanvas(ed)
             QuickBar(ed, Modifier.align(Alignment.BottomCenter))
             BoardBar(ed, Modifier.align(Alignment.TopCenter))
@@ -544,7 +628,7 @@ private fun TopBar(ed: Editor, onUpdate: () -> Unit, onFile: (FileOp) -> Unit) {
             TextButton({ menu = true }) { Text("File", fontSize = 12.sp) }
             DropdownMenu(menu, { menu = false }) {
                 for ((label, op) in listOf(
-                    "Open project" to FileOp.OPEN, "Save project" to FileOp.SAVE,
+                    "Import to board" to FileOp.IMPORT, "Open project" to FileOp.OPEN, "Save project" to FileOp.SAVE,
                     "Export SVG" to FileOp.SVG, "Export PNG" to FileOp.PNG, "Export PDF" to FileOp.PDF,
                     "Export PSD (layers)" to FileOp.PSD, "Export EPS" to FileOp.EPS, "Export AI" to FileOp.AI,
                 )) {
@@ -1002,29 +1086,65 @@ private fun GridPanel(ed: Editor) {
 }
 
 @Composable
-private fun SmallBtn(label: String, onClick: () -> Unit) {
-    TextButton(onClick, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(label, fontSize = 12.sp) }
-}
-
-@Composable
 private fun LayersPanel(ed: Editor) {
     ed.version
+    val rowH = 44.dp
+    val rowPx = with(LocalDensity.current) { rowH.toPx() }
+    var dragKey by remember { mutableStateOf<Long?>(null) }
+    var dragDy by remember { mutableFloatStateOf(0f) }
     PanelBox {
         if (ed.items.isEmpty()) {
             Label("No shapes yet.")
             return@PanelBox
         }
-        for (unit in ed.layerUnits().asReversed()) {
+        // top layer first; a row follows the finger while its handle is dragged and the others make room
+        val units = ed.layerUnits().asReversed()
+        val from = units.indexOfFirst { it[0].id == dragKey }
+        val target = if (from < 0) -1 else (from + (dragDy / rowPx).roundToInt()).coerceIn(0, units.lastIndex)
+        for ((d, unit) in units.withIndex()) {
             val item = unit.last()
+            val key = unit[0].id
             val on = item.id in ed.selection
+            val shift = when {
+                key == dragKey -> dragDy
+                from in 0 until target && d in (from + 1)..target -> -rowPx
+                target in 0 until from && d in target until from -> rowPx
+                else -> 0f
+            }
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .height(rowH)
+                    .zIndex(if (key == dragKey) 1f else 0f)
+                    .graphicsLayer { translationY = shift }
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) SelBg else Color.Transparent)
+                    .background(if (on || key == dragKey) SelBg else Color.Transparent)
                     .clickable { ed.selectFromLayers(item) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Box(
+                    Modifier
+                        .width(36.dp)
+                        .height(rowH)
+                        .pointerInput(key) {
+                            detectVerticalDragGestures(
+                                onDragStart = { dragKey = key; dragDy = 0f },
+                                onVerticalDrag = { change, dy -> change.consume(); dragDy += dy },
+                                onDragEnd = {
+                                    val now = ed.layerUnits().asReversed()
+                                    val f = now.indexOfFirst { it[0].id == key }
+                                    if (f >= 0) {
+                                        val t = (f + (dragDy / rowPx).roundToInt()).coerceIn(0, now.lastIndex)
+                                        ed.moveLayerTo(now[f].last(), now.lastIndex - t)
+                                    }
+                                    dragKey = null
+                                    dragDy = 0f
+                                },
+                                onDragCancel = { dragKey = null; dragDy = 0f },
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(G.Grip, Muted) }
                 Box(
                     Modifier
                         .size(20.dp)
@@ -1036,12 +1156,15 @@ private fun LayersPanel(ed: Editor) {
                     if (unit.size > 1) "Group of ${unit.size} shapes" else item.label(),
                     fontSize = 12.sp,
                     color = if (item.visible) Ink else Muted,
+                    maxLines = 1,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                 )
-                SmallBtn("Up") { ed.moveLayer(item, true) }
-                SmallBtn("Down") { ed.moveLayer(item, false) }
-                SmallBtn(if (item.visible) "Hide" else "Show") { ed.toggleVisible(item) }
-                SmallBtn(if (item.locked) "Unlock" else "Lock") { ed.toggleLock(item) }
+                IconButton({ ed.toggleVisible(item) }, Modifier.size(40.dp)) {
+                    Glyph(if (item.visible) G.Eye else G.EyeOff, if (item.visible) Ink else Muted)
+                }
+                IconButton({ ed.toggleLock(item) }, Modifier.size(40.dp)) {
+                    Glyph(if (item.locked) G.Lock else G.Unlock, if (item.locked) Ink else Muted)
+                }
             }
         }
     }
@@ -1171,15 +1294,20 @@ private fun QPill(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun QBtn(g: G, enabled: Boolean = true, active: Boolean = false, onClick: () -> Unit) {
-    Box(
+private fun QBtn(g: G, label: String, enabled: Boolean = true, active: Boolean = false, onClick: () -> Unit) {
+    val tint = if (enabled) Ink else Muted
+    Column(
         Modifier
-            .size(44.dp)
-            .clip(RoundedCornerShape(22.dp))
+            .widthIn(min = 56.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(if (active) SelBg else Color.Transparent)
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { Glyph(g, if (enabled) Ink else Muted) }
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Glyph(g, tint)
+        Text(label, fontSize = 12.sp, color = tint, maxLines = 1)
+    }
 }
 
 @Composable
@@ -1207,52 +1335,52 @@ private fun QuickBar(ed: Editor, modifier: Modifier) {
             if (open.isNotEmpty()) QPill {
                 when (open) {
                     "align" -> {
-                        QBtn(G.AlignL) { ed.align(AlignTo.LEFT) }
-                        QBtn(G.AlignC) { ed.align(AlignTo.CENTER) }
-                        QBtn(G.AlignR) { ed.align(AlignTo.RIGHT) }
-                        QBtn(G.AlignT) { ed.align(AlignTo.TOP) }
-                        QBtn(G.AlignM) { ed.align(AlignTo.MIDDLE) }
-                        QBtn(G.AlignB) { ed.align(AlignTo.BOTTOM) }
+                        QBtn(G.AlignL, "Left") { ed.align(AlignTo.LEFT) }
+                        QBtn(G.AlignC, "Center") { ed.align(AlignTo.CENTER) }
+                        QBtn(G.AlignR, "Right") { ed.align(AlignTo.RIGHT) }
+                        QBtn(G.AlignT, "Top") { ed.align(AlignTo.TOP) }
+                        QBtn(G.AlignM, "Middle") { ed.align(AlignTo.MIDDLE) }
+                        QBtn(G.AlignB, "Bottom") { ed.align(AlignTo.BOTTOM) }
                     }
                     "rotate" -> {
-                        QBtn(G.RotL) { ed.rotate90(false) }
-                        QBtn(G.RotR) { ed.rotate90(true) }
-                        QBtn(G.FlipV) { ed.flip(false) }
-                        QBtn(G.FlipH) { ed.flip(true) }
+                        QBtn(G.RotL, "Rotate left") { ed.rotate90(false) }
+                        QBtn(G.RotR, "Rotate right") { ed.rotate90(true) }
+                        QBtn(G.FlipV, "Flip vertical") { ed.flip(false) }
+                        QBtn(G.FlipH, "Flip horizontal") { ed.flip(true) }
                     }
                     "order" -> {
-                        QBtn(G.ToFront) { ed.reorder(front = true, toEnd = true) }
-                        QBtn(G.Forward) { ed.reorder(front = true, toEnd = false) }
-                        QBtn(G.Backward) { ed.reorder(front = false, toEnd = false) }
-                        QBtn(G.ToBack) { ed.reorder(front = false, toEnd = true) }
+                        QBtn(G.ToFront, "To front") { ed.reorder(front = true, toEnd = true) }
+                        QBtn(G.Forward, "Forward") { ed.reorder(front = true, toEnd = false) }
+                        QBtn(G.Backward, "Backward") { ed.reorder(front = false, toEnd = false) }
+                        QBtn(G.ToBack, "To back") { ed.reorder(front = false, toEnd = true) }
                     }
                     "group" -> {
-                        QBtn(G.Group) { ed.group() }
-                        QBtn(G.Ungroup, ed.selectedItems().any { it.groupId != 0L }) { ed.ungroup() }
+                        QBtn(G.Group, "Group") { ed.group() }
+                        QBtn(G.Ungroup, "Ungroup", ed.selectedItems().any { it.groupId != 0L }) { ed.ungroup() }
                     }
                     "clip" -> {
-                        QBtn(G.Clip) { ed.clipToTop() }
-                        QBtn(G.Unclip, ed.canUnclip) { ed.unclip() }
+                        QBtn(G.Clip, "Clip") { ed.clipToTop() }
+                        QBtn(G.Unclip, "Unclip", ed.canUnclip) { ed.unclip() }
                     }
                     "dist" -> {
-                        QBtn(G.DistH) { ed.distribute(true) }
-                        QBtn(G.DistV) { ed.distribute(false) }
+                        QBtn(G.DistH, "Horizontal") { ed.distribute(true) }
+                        QBtn(G.DistV, "Vertical") { ed.distribute(false) }
                     }
                 }
             }
             QPill {
-                QBtn(G.AlignL, active = open == "align") { pick("align") }
-                QBtn(G.RotR, active = open == "rotate") { pick("rotate") }
-                QBtn(G.Arrange, active = open == "order") { pick("order") }
+                QBtn(G.AlignL, "Align", active = open == "align") { pick("align") }
+                QBtn(G.RotR, "Rotate", active = open == "rotate") { pick("rotate") }
+                QBtn(G.Arrange, "Order", active = open == "order") { pick("order") }
                 if (n >= 2) {
-                    QBtn(G.Group, active = open == "group") { pick("group") }
-                    QBtn(G.Clip, active = open == "clip") { pick("clip") }
+                    QBtn(G.Group, "Group", active = open == "group") { pick("group") }
+                    QBtn(G.Clip, "Clip", active = open == "clip") { pick("clip") }
                 }
-                if (units >= 3) QBtn(G.DistH, active = open == "dist") { pick("dist") }
+                if (units >= 3) QBtn(G.DistH, "Distribute", active = open == "dist") { pick("dist") }
                 QDivider()
-                QBtn(G.Dup) { ed.duplicateSelected() }
-                QBtn(G.SelAll) { ed.selectAll() }
-                QBtn(G.Trash) { ed.deleteSelected() }
+                QBtn(G.Dup, "Duplicate") { ed.duplicateSelected() }
+                QBtn(G.SelAll, "Select all") { ed.selectAll() }
+                QBtn(G.Trash, "Delete") { ed.deleteSelected() }
             }
         }
     }
@@ -1271,11 +1399,11 @@ private fun BoardBar(ed: Editor, modifier: Modifier) {
             Text(name, fontSize = 12.sp, color = Ink, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp))
             if (moving) {
                 Text("Drag to move", fontSize = 12.sp, color = Muted, modifier = Modifier.padding(end = 6.dp))
-                QBtn(G.Check) { ed.boardMoveOn = false }
+                QBtn(G.Check, "Done") { ed.boardMoveOn = false }
             } else {
-                QBtn(G.Move) { ed.boardMenu = null; ed.boardMoveOn = true }
-                QBtn(G.Dup) { ed.duplicateBoard(ed.activeBoard) }
-                QBtn(G.Trash, ed.boards.size > 1) { ed.removeBoard(ed.activeBoard) }
+                QBtn(G.Move, "Move") { ed.boardMenu = null; ed.boardMoveOn = true }
+                QBtn(G.Dup, "Duplicate") { ed.duplicateBoard(ed.activeBoard) }
+                QBtn(G.Trash, "Delete", ed.boards.size > 1) { ed.removeBoard(ed.activeBoard) }
             }
         }
     }
