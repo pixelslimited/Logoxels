@@ -18,7 +18,7 @@ internal object Pal {
 
 internal val Ink: Color get() = if (Pal.dark) Color(0xFFF3F4F6) else Color(0xFF111827)
 internal val Muted: Color get() = if (Pal.dark) Color(0xFF6B7280) else Color(0xFF9CA3AF)
-internal val Accent: Color get() = if (Pal.dark) Color(0xFF60A5FA) else Color(0xFF2563EB)
+internal val Accent: Color get() = if (Pal.dark) Color(0xFF4ADE80) else Color(0xFF16A34A)
 internal val Bar: Color get() = if (Pal.dark) Color(0xFF1F2937) else Color.White
 internal val Back: Color get() = if (Pal.dark) Color(0xFF0B1220) else Color(0xFFECEFF1)
 internal val PanelBg: Color get() = if (Pal.dark) Color(0xFF111827) else Color(0xFFF8FAFC)

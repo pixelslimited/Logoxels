@@ -1487,7 +1487,7 @@ private fun PreviewPanel(ed: Editor) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color(0xFF1E3A8A), Color(0xFF0F172A))), RoundedCornerShape(16.dp))
+                .background(Brush.verticalGradient(listOf(Color(0xFF14532D), Color(0xFF0F172A))), RoundedCornerShape(16.dp))
                 .horizontalScroll(rememberScrollState())
                 .padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
