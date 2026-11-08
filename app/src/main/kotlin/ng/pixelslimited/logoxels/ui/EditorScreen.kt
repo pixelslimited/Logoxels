@@ -17,6 +17,7 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.horizontalScroll
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -58,6 +60,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
@@ -956,15 +959,20 @@ private fun Label(text: String) {
 }
 
 @Composable
-private fun Swatch(color: Int?, selected: Boolean, onClick: () -> Unit) {
+private fun Swatch(color: Int?, selected: Boolean, onDouble: (() -> Unit)? = null, onClick: () -> Unit) {
     val ring = if (selected) Accent else Line
+    val click by rememberUpdatedState(onClick)
+    val double by rememberUpdatedState(onDouble)
     Box(
         Modifier
             .size(36.dp)
             .clip(CircleShape)
             .background(if (color == null) Color.White else Color(color))
             .border(if (selected) 3.dp else 1.dp, ring, CircleShape)
-            .clickable(onClick = onClick),
+            // a double tap opens the picker; only swatches that offer it wait for the second tap
+            .pointerInput(onDouble != null) {
+                detectTapGestures(onDoubleTap = if (onDouble != null) { _: Offset -> double?.invoke() } else null, onTap = { click() })
+            },
     ) {
         if (color == null) {
             Canvas(Modifier.fillMaxSize()) {
@@ -977,12 +985,14 @@ private fun Swatch(color: Int?, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun ColorRow(current: Int?, allowNone: Boolean, onPick: (Int?) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    var seed by remember { mutableStateOf(0) }
+    fun edit(c: Int) { seed = c; open = true }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (allowNone) Swatch(null, current == null) { onPick(null) }
-        if (current != null && current !in palette) Swatch(current, true) { open = true }
-        palette.forEach { c -> Swatch(c, current == c) { onPick(c) } }
+        if (current != null && current !in palette) Swatch(current, true) { edit(current) }
+        palette.forEach { c -> Swatch(c, current == c, onDouble = { edit(c) }) { onPick(c) } }
         Box(
-            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Line, CircleShape).clickable { open = true },
+            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Line, CircleShape).clickable { edit(current ?: palette[0]) },
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawLine(Ink, Offset(size.width * .3f, size.height / 2f), Offset(size.width * .7f, size.height / 2f), strokeWidth = 3f)
@@ -990,9 +1000,10 @@ private fun ColorRow(current: Int?, allowNone: Boolean, onPick: (Int?) -> Unit) 
             }
         }
     }
-    if (open) ColorDialog(current ?: palette[0], { onPick(it); open = false }, { open = false })
+    if (open) ColorDialog(seed, { onPick(it); open = false }, { open = false })
 }
 
+/** Colour picker: hue across, saturation down, brightness on the side bar, and the hex code underneath. */
 @Composable
 private fun ColorDialog(initial: Int, onDone: (Int) -> Unit, onDismiss: () -> Unit) {
     val start = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(initial, it) } }
@@ -1002,34 +1013,95 @@ private fun ColorDialog(initial: Int, onDone: (Int) -> Unit, onDismiss: () -> Un
     var hex by remember { mutableStateOf("%06X".format(initial and 0xFFFFFF)) }
     val color = android.graphics.Color.HSVToColor(floatArrayOf(h, s, v))
     fun syncHex() { hex = "%06X".format(android.graphics.Color.HSVToColor(floatArrayOf(h, s, v)) and 0xFFFFFF) }
+    fun setHueSat(p: Offset, w: Float, ht: Float) {
+        h = (p.x / w).coerceIn(0f, 1f) * 360f
+        s = 1f - (p.y / ht).coerceIn(0f, 1f)
+        syncHex()
+    }
+    fun setBright(y: Float, ht: Float) {
+        v = 1f - (y / ht).coerceIn(0f, 1f)
+        syncHex()
+    }
+    val hues = remember { List(7) { Color(android.graphics.Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f))) } }
+    val top = Color(android.graphics.Color.HSVToColor(floatArrayOf(h, s, 1f)))
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton({ onDone(color) }) { Text("Use", fontSize = 14.sp) } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel", fontSize = 14.sp) } },
-        title = { Text("Colour", fontSize = 16.sp) },
         text = {
-            Column {
-                Box(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)))
-                Label("Hue")
-                Slider(h, { h = it; syncHex() }, valueRange = 0f..360f)
-                Label("Saturation")
-                Slider(s, { s = it; syncHex() }, valueRange = 0f..1f)
-                Label("Brightness")
-                Slider(v, { v = it; syncHex() }, valueRange = 0f..1f)
-                OutlinedTextField(
-                    hex,
-                    { t ->
-                        hex = t.uppercase().filter { it in "0123456789ABCDEF" }.take(6)
-                        if (hex.length == 6) {
-                            val hsv = FloatArray(3)
-                            android.graphics.Color.colorToHSV(0xFF000000.toInt() or hex.toInt(16), hsv)
-                            h = hsv[0]; s = hsv[1]; v = hsv[2]
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth().height(200.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(4.dp))
+                            .pointerInput(Unit) { detectTapGestures { p -> setHueSat(p, size.width.toFloat(), size.height.toFloat()) } }
+                            .pointerInput(Unit) {
+                                detectDragGestures(onDragStart = { p -> setHueSat(p, size.width.toFloat(), size.height.toFloat()) }) { c, _ ->
+                                    c.consume()
+                                    setHueSat(c.position, size.width.toFloat(), size.height.toFloat())
+                                }
+                            },
+                    ) {
+                        Canvas(Modifier.fillMaxSize()) {
+                            drawRect(Brush.horizontalGradient(hues))
+                            drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.White)))
+                            val cx = h / 360f * size.width
+                            val cy = (1f - s) * size.height
+                            val r = 14f
+                            drawLine(Color.White, Offset(cx - r, cy), Offset(cx + r, cy), strokeWidth = 6f)
+                            drawLine(Color.White, Offset(cx, cy - r), Offset(cx, cy + r), strokeWidth = 6f)
+                            drawLine(Color.Black, Offset(cx - r, cy), Offset(cx + r, cy), strokeWidth = 3f)
+                            drawLine(Color.Black, Offset(cx, cy - r), Offset(cx, cy + r), strokeWidth = 3f)
                         }
-                    },
-                    Modifier.fillMaxWidth(),
-                    label = { Text("Hex", fontSize = 12.sp) },
-                    singleLine = true,
-                )
+                    }
+                    Box(
+                        Modifier
+                            .width(30.dp)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(4.dp))
+                            .pointerInput(Unit) { detectTapGestures { p -> setBright(p.y, size.height.toFloat()) } }
+                            .pointerInput(Unit) {
+                                detectDragGestures(onDragStart = { p -> setBright(p.y, size.height.toFloat()) }) { c, _ ->
+                                    c.consume()
+                                    setBright(c.position.y, size.height.toFloat())
+                                }
+                            },
+                    ) {
+                        Canvas(Modifier.fillMaxSize()) {
+                            drawRect(Brush.verticalGradient(listOf(top, Color.Black)))
+                            val y = (1f - v) * size.height
+                            val tri = CPath().apply {
+                                moveTo(size.width, y - 11f)
+                                lineTo(size.width - 16f, y)
+                                lineTo(size.width, y + 11f)
+                                close()
+                            }
+                            drawPath(tri, Color.White)
+                            drawPath(tri, Color.Black, style = Stroke(width = 2f))
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)).border(1.dp, Line, RoundedCornerShape(8.dp)))
+                    OutlinedTextField(
+                        hex,
+                        { t ->
+                            hex = t.uppercase().filter { it in "0123456789ABCDEF" }.take(6)
+                            if (hex.length == 6) {
+                                val hsv = FloatArray(3)
+                                android.graphics.Color.colorToHSV(0xFF000000.toInt() or hex.toInt(16), hsv)
+                                h = hsv[0]; s = hsv[1]; v = hsv[2]
+                            }
+                        },
+                        Modifier.weight(1f),
+                        label = { Text("Hex", fontSize = 12.sp) },
+                        prefix = { Text("#", fontSize = 14.sp) },
+                        textStyle = TextStyle(fontSize = 14.sp, color = Ink),
+                        singleLine = true,
+                    )
+                }
             }
         },
     )
