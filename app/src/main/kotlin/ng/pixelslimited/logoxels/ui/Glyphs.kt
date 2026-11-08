@@ -25,7 +25,7 @@ import kotlin.math.sin
 enum class G { Select, Rect, Oval, Polygon, Star, Line, Undo, Redo, Union, Minus, Intersect, Exclude, Style, Arrange, Corner, Pen, Knife, Layers, Nodes, Scissors, Grid, Text, Library, Trace, Eyedropper, Artboard, Sketch, Theme,
     AlignL, AlignC, AlignR, AlignT, AlignM, AlignB, RotL, RotR, FlipH, FlipV, ToFront, Forward, Backward, ToBack,
     Group, Ungroup, Clip, Unclip, DistH, DistV, Dup, SelAll, Trash, Move, Check,
-    Eye, EyeOff, Lock, Unlock, Grip }
+    Eye, EyeOff, Lock, Unlock, Grip, Close }
 
 private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     val c = w / 2f
@@ -270,6 +270,7 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                     }
                 }, tint, style = st)
             }
+            G.Close -> { ln(.26f, .26f, .74f, .74f, .1f); ln(.74f, .26f, .26f, .74f, .1f) }
             G.Grip -> {
                 for (cx in listOf(.36f, .64f)) {
                     for (cy in listOf(.24f, .5f, .76f)) drawCircle(tint, w * .07f, pt(cx, cy))

@@ -15,6 +15,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.horizontalScroll
@@ -50,7 +51,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
@@ -84,12 +84,15 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ng.pixelslimited.logoxels.engine.AlignTo
@@ -300,8 +303,9 @@ fun EditorScreen(ed: Editor) {
                 .dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget),
         ) {
             EditorCanvas(ed)
-            QuickBar(ed, Modifier.align(Alignment.BottomCenter))
+            QuickBar(ed, Modifier.align(Alignment.BottomCenter).padding(end = 76.dp))
             BoardBar(ed, Modifier.align(Alignment.TopCenter))
+            ToolDial(ed, panel) { panel = if (panel == it) Panel.NONE else it }
         }
         when (ed.tool) {
             Tool.CORNERS -> CornersPanel(ed)
@@ -324,7 +328,6 @@ fun EditorScreen(ed: Editor) {
                 Panel.NONE -> Unit
             }
         }
-        BottomBar(ed, panel) { panel = if (panel == it) Panel.NONE else it }
     }
 }
 
@@ -652,79 +655,179 @@ private fun IconBtn(g: G, enabled: Boolean, onClick: () -> Unit) {
     IconButton(onClick = onClick, enabled = enabled) { Glyph(g, if (enabled) Ink else Muted) }
 }
 
-@Composable
-private fun BottomBar(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().background(Bar).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ToolBtn(G.Select, "Select", ed.tool == Tool.SELECT) { ed.tool = Tool.SELECT }
-        ToolGroup(
-            ed, "Shapes",
-            listOf(
-                ToolEntry(G.Rect, "Rectangle", Tool.RECT), ToolEntry(G.Oval, "Oval", Tool.ELLIPSE),
-                ToolEntry(G.Polygon, "Polygon", Tool.POLYGON), ToolEntry(G.Star, "Star", Tool.STAR),
-                ToolEntry(G.Line, "Line", Tool.LINE),
-            ),
-        )
-        ToolGroup(ed, "Draw", listOf(ToolEntry(G.Pen, "Pen", Tool.PEN), ToolEntry(G.Sketch, "Sketch", Tool.SKETCH)))
-        ToolBtn(G.Text, "Text", ed.tool == Tool.TEXT) { ed.tool = Tool.TEXT }
-        ToolGroup(
-            ed, "Edit",
-            listOf(
-                ToolEntry(G.Nodes, "Nodes", Tool.NODES), ToolEntry(G.Corner, "Corners", Tool.CORNERS),
-                ToolEntry(G.Scissors, "Scissors", Tool.SCISSORS), ToolEntry(G.Knife, "Knife", Tool.KNIFE),
-            ),
-        )
-        ToolBtn(G.Eyedropper, "Eyedrop", ed.tool == Tool.EYEDROPPER) { ed.tool = Tool.EYEDROPPER }
-        VerticalDivider(Modifier.height(36.dp).padding(horizontal = 4.dp))
-        ToolBtn(G.Style, "Style", panel == Panel.STYLE) { onPanel(Panel.STYLE) }
-        ToolBtn(G.Union, "Combine", panel == Panel.COMBINE) { onPanel(Panel.COMBINE) }
-        ToolBtn(G.Arrange, "Arrange", panel == Panel.ARRANGE) { onPanel(Panel.ARRANGE) }
-        ToolBtn(G.Layers, "Layers", panel == Panel.LAYERS) { onPanel(Panel.LAYERS) }
-        ToolBtn(G.Grid, "Grid", panel == Panel.GRID) { onPanel(Panel.GRID) }
-        ToolBtn(G.Library, "Shapes", panel == Panel.ICONS) { onPanel(Panel.ICONS) }
-        ToolBtn(G.Trace, "Trace", panel == Panel.TRACE) { onPanel(Panel.TRACE) }
-        ToolBtn(G.Artboard, "Canvas", panel == Panel.ARTBOARD) { onPanel(Panel.ARTBOARD) }
-    }
-}
-
 private class ToolEntry(val g: G, val label: String, val tool: Tool)
 
-/** A toolbar button that opens a small menu of related tools and remembers the last one used. */
+/** One dial button: a single tool, or a named group whose tools open as extra rows. */
+private class ToolGroupDef(val name: String, val entries: List<ToolEntry>)
+
+private class PanelDef(val g: G, val label: String, val panel: Panel)
+
+private fun oneTool(g: G, label: String, tool: Tool) = ToolGroupDef(label, listOf(ToolEntry(g, label, tool)))
+
+private val dialTools = listOf(
+    oneTool(G.Select, "Select", Tool.SELECT),
+    ToolGroupDef(
+        "Shapes",
+        listOf(
+            ToolEntry(G.Rect, "Rectangle", Tool.RECT), ToolEntry(G.Oval, "Oval", Tool.ELLIPSE),
+            ToolEntry(G.Polygon, "Polygon", Tool.POLYGON), ToolEntry(G.Star, "Star", Tool.STAR),
+            ToolEntry(G.Line, "Line", Tool.LINE),
+        ),
+    ),
+    ToolGroupDef("Draw", listOf(ToolEntry(G.Pen, "Pen", Tool.PEN), ToolEntry(G.Sketch, "Sketch", Tool.SKETCH))),
+    oneTool(G.Text, "Text", Tool.TEXT),
+    ToolGroupDef(
+        "Edit",
+        listOf(
+            ToolEntry(G.Nodes, "Nodes", Tool.NODES), ToolEntry(G.Corner, "Corners", Tool.CORNERS),
+            ToolEntry(G.Scissors, "Scissors", Tool.SCISSORS), ToolEntry(G.Knife, "Knife", Tool.KNIFE),
+        ),
+    ),
+    oneTool(G.Eyedropper, "Eyedrop", Tool.EYEDROPPER),
+)
+
+private val dialPanels = listOf(
+    PanelDef(G.Style, "Style", Panel.STYLE), PanelDef(G.Union, "Combine", Panel.COMBINE),
+    PanelDef(G.Arrange, "Arrange", Panel.ARRANGE), PanelDef(G.Layers, "Layers", Panel.LAYERS),
+    PanelDef(G.Grid, "Grid", Panel.GRID), PanelDef(G.Library, "Library", Panel.ICONS),
+    PanelDef(G.Trace, "Trace", Panel.TRACE), PanelDef(G.Artboard, "Canvas", Panel.ARTBOARD),
+)
+
+private class DialRow(val g: G, val label: String, val active: Boolean, val small: Boolean = false, val onClick: () -> Unit)
+
+private val OnAccent: Color get() = if (Pal.dark) Color(0xFF0B1220) else Color.White
+
+/**
+ * Floating tool menu. The round button can be dragged anywhere on the board; tapping it opens the tools and
+ * panels as a column of round buttons. Picking one closes the menu; tapping anywhere else closes it and
+ * returns to the Select tool.
+ */
 @Composable
-private fun ToolGroup(ed: Editor, name: String, entries: List<ToolEntry>) {
+private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
+    val fabPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val marginPx = with(LocalDensity.current) { 16.dp.toPx() }
+    val gapPx = with(LocalDensity.current) { 10.dp.toPx() }.roundToInt()
     var open by remember { mutableStateOf(false) }
-    var last by remember { mutableStateOf(entries[0]) }
-    val active = entries.firstOrNull { it.tool == ed.tool }
-    Box {
-        ToolBtn((active ?: last).g, name, active != null) { open = true }
-        DropdownMenu(open, { open = false }) {
-            for (e in entries) {
-                DropdownMenuItem(
-                    { Text(e.label, fontSize = 14.sp, fontWeight = if (e === active) FontWeight.Bold else FontWeight.Normal) },
-                    { last = e; ed.tool = e.tool; open = false },
-                    leadingIcon = { Glyph(e.g, Ink) },
-                )
+    var group by remember { mutableStateOf<String?>(null) }
+    var pos by remember { mutableStateOf<Offset?>(null) }
+    var area by remember { mutableStateOf(IntSize.Zero) }
+    fun dismiss() {
+        open = false
+        group = null
+        ed.tool = Tool.SELECT
+    }
+    fun pickTool(t: Tool) {
+        ed.tool = t
+        open = false
+        group = null
+    }
+    val rows = ArrayList<DialRow>()
+    for (d in dialTools) {
+        val single = d.entries.singleOrNull()
+        if (single != null) {
+            rows.add(DialRow(single.g, single.label, ed.tool == single.tool) { pickTool(single.tool) })
+        } else {
+            val act = d.entries.firstOrNull { it.tool == ed.tool }
+            rows.add(DialRow((act ?: d.entries[0]).g, d.name, act != null || group == d.name) { group = if (group == d.name) null else d.name })
+            if (group == d.name) for (e in d.entries) rows.add(DialRow(e.g, e.label, ed.tool == e.tool, small = true) { pickTool(e.tool) })
+        }
+    }
+    for (p in dialPanels) rows.add(DialRow(p.g, p.label, panel == p.panel) { onPanel(p.panel); open = false; group = null })
+    val activeGlyph = dialTools.flatMap { it.entries }.firstOrNull { it.tool == ed.tool }?.g ?: G.Select
+    val fab = pos ?: Offset(area.width - fabPx - marginPx, area.height - fabPx - marginPx)
+    val known = area.width > 0
+    // labels sit on the side towards the middle of the board, and the column opens towards it
+    val right = !known || fab.x + fabPx / 2f > area.width / 2f
+    val down = known && fab.y + fabPx / 2f < area.height / 2f
+    Box(Modifier.fillMaxSize().onSizeChanged { area = it }) {
+        if (open) Box(Modifier.fillMaxSize().pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); dismiss() } })
+        Layout(
+            content = {
+                if (open) {
+                    Column(
+                        Modifier.verticalScroll(rememberScrollState()).padding(4.dp),
+                        horizontalAlignment = if (right) Alignment.End else Alignment.Start,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        for (r in if (down) rows else rows.asReversed()) DialRowView(r, right)
+                    }
+                }
+                Box(
+                    Modifier
+                        .size(56.dp)
+                        .shadow(6.dp, CircleShape)
+                        .background(Accent, CircleShape)
+                        .clip(CircleShape)
+                        .clickable { if (open) dismiss() else open = true }
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, drag ->
+                                change.consume()
+                                val cur = pos ?: Offset(area.width - fabPx - marginPx, area.height - fabPx - marginPx)
+                                pos = Offset(
+                                    (cur.x + drag.x).coerceIn(0f, (area.width - fabPx).coerceAtLeast(0f)),
+                                    (cur.y + drag.y).coerceIn(0f, (area.height - fabPx).coerceAtLeast(0f)),
+                                )
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(if (open) G.Close else activeGlyph, OnAccent) }
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) { ms, c ->
+            val side = fabPx.roundToInt()
+            val fabM = ms.last().measure(Constraints.fixed(side, side))
+            val f = pos ?: Offset(c.maxWidth - fabPx - marginPx, c.maxHeight - fabPx - marginPx)
+            val fx = f.x.roundToInt().coerceIn(0, (c.maxWidth - side).coerceAtLeast(0))
+            val fy = f.y.roundToInt().coerceIn(0, (c.maxHeight - side).coerceAtLeast(0))
+            val room = if (down) c.maxHeight - fy - side else fy
+            val stack = if (ms.size > 1) ms.first().measure(Constraints(maxWidth = c.maxWidth, maxHeight = (room - gapPx).coerceAtLeast(0))) else null
+            layout(c.maxWidth, c.maxHeight) {
+                if (stack != null) {
+                    val sx = (if (right) fx + side - stack.width else fx).coerceIn(0, (c.maxWidth - stack.width).coerceAtLeast(0))
+                    stack.place(sx, if (down) fy + side + gapPx else fy - gapPx - stack.height)
+                }
+                fabM.place(fx, fy)
             }
         }
     }
 }
 
 @Composable
-private fun ToolBtn(g: G, label: String, selected: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .width(68.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) SelBg else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+private fun DialRowView(r: DialRow, labelLeft: Boolean) {
+    val d = if (r.small) 40.dp else 48.dp
+    val circle = Modifier
+        .size(d)
+        .shadow(4.dp, CircleShape)
+        .background(Accent, CircleShape)
+        .then(if (r.active) Modifier.border(3.dp, Ink, CircleShape) else Modifier)
+        .clip(CircleShape)
+        .clickable(onClick = r.onClick)
+    val labelShape = RoundedCornerShape(8.dp)
+    Row(
+        Modifier.padding(horizontal = if (r.small) 4.dp else 0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Glyph(g, Ink)
-        Text(label, fontSize = 12.sp, color = Ink, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+        if (labelLeft) DialLabel(r, labelShape)
+        Box(circle, contentAlignment = Alignment.Center) { Glyph(r.g, OnAccent) }
+        if (!labelLeft) DialLabel(r, labelShape)
     }
+}
+
+@Composable
+private fun DialLabel(r: DialRow, shape: RoundedCornerShape) {
+    Text(
+        r.label,
+        fontSize = 12.sp,
+        color = Ink,
+        fontWeight = if (r.active) FontWeight.Bold else FontWeight.Normal,
+        modifier = Modifier
+            .shadow(2.dp, shape)
+            .background(Bar, shape)
+            .clip(shape)
+            .clickable(onClick = r.onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
 }
 
 // ---------------- panels ----------------
