@@ -18,6 +18,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.horizontalScroll
@@ -1649,14 +1650,36 @@ private fun QPill(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun QBtn(g: G, label: String, enabled: Boolean = true, active: Boolean = false, onClick: () -> Unit) {
+private fun QBtn(g: G, label: String, enabled: Boolean = true, active: Boolean = false, hold: Boolean = false, onRelease: () -> Unit = {}, onClick: () -> Unit) {
     val tint = if (enabled) Ink else Muted
+    val scope = rememberCoroutineScope()
+    val act by rememberUpdatedState(onClick)
+    val release by rememberUpdatedState(onRelease)
+    // with hold, the action fires on press and repeats while the finger stays down
+    val tap = if (hold) {
+        Modifier.pointerInput(enabled) {
+            if (!enabled) return@pointerInput
+            awaitEachGesture {
+                awaitFirstDown()
+                act()
+                val repeat = scope.launch {
+                    delay(400)
+                    while (true) { act(); delay(60) }
+                }
+                waitForUpOrCancellation()
+                repeat.cancel()
+                release()
+            }
+        }
+    } else {
+        Modifier.clickable(enabled = enabled, onClick = onClick)
+    }
     Column(
         Modifier
             .widthIn(min = 56.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(if (active) SelBg else Color.Transparent)
-            .clickable(enabled = enabled, onClick = onClick)
+            .then(tap)
             .padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -1698,10 +1721,10 @@ private fun QuickBar(ed: Editor, modifier: Modifier) {
                         QBtn(G.AlignB, "Bottom") { ed.align(AlignTo.BOTTOM) }
                     }
                     "nudge" -> {
-                        QBtn(G.ArrL, "Left") { ed.nudge(-1, 0) }
-                        QBtn(G.ArrU, "Up") { ed.nudge(0, -1) }
-                        QBtn(G.ArrD, "Down") { ed.nudge(0, 1) }
-                        QBtn(G.ArrR, "Right") { ed.nudge(1, 0) }
+                        QBtn(G.ArrL, "Left", hold = true, onRelease = ed::endSlide) { ed.nudge(-1, 0) }
+                        QBtn(G.ArrU, "Up", hold = true, onRelease = ed::endSlide) { ed.nudge(0, -1) }
+                        QBtn(G.ArrD, "Down", hold = true, onRelease = ed::endSlide) { ed.nudge(0, 1) }
+                        QBtn(G.ArrR, "Right", hold = true, onRelease = ed::endSlide) { ed.nudge(1, 0) }
                         QBtn(G.Grid, "Step ${ed.nudgeStep}") { ed.cycleNudgeStep() }
                     }
                     "rotate" -> {

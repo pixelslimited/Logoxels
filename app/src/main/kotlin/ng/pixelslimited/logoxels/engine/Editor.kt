@@ -1475,8 +1475,12 @@ class Editor {
         nudgeStep = when (nudgeStep) { 1 -> 5; 5 -> 10; 10 -> 50; else -> 1 }
     }
 
-    /** Moves the selection one step: [dx] and [dy] are -1, 0 or 1. */
-    fun nudge(dx: Int, dy: Int) = transformSelection { _, _ -> Matrix().apply { setTranslate((dx * nudgeStep).toFloat(), (dy * nudgeStep).toFloat()) } }
+    /** Moves the selection one step ([dx] and [dy] are -1, 0 or 1). Repeated steps share one undo until [endSlide]. */
+    fun nudge(dx: Int, dy: Int) {
+        if (selection.isEmpty()) return
+        val d = nudgeStep.toFloat()
+        slide { for (item in selectedItems()) item.offset(dx * d, dy * d) }
+    }
 
     fun rotate90(clockwise: Boolean) =
         transformSelection { cx, cy -> Matrix().apply { setRotate(if (clockwise) 90f else -90f, cx, cy) } }
