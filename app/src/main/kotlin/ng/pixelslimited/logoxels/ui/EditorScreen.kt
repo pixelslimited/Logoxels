@@ -84,6 +84,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draganddrop.DragAndDropEvent
@@ -381,6 +382,7 @@ fun EditorScreen(ed: Editor) {
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .clipToBounds()
                 .onGloballyPositioned { canvasOrigin = it.positionInRoot() }
                 .dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget),
         ) {
