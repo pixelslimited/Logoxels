@@ -24,6 +24,7 @@ import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -1638,15 +1639,26 @@ private fun AppIcon(bmp: ImageBitmap, bg: Color, name: String) {
 
 @Composable
 private fun QPill(content: @Composable () -> Unit) {
-    Row(
-        Modifier
-            .shadow(8.dp, RoundedCornerShape(28.dp))
-            .clip(RoundedCornerShape(28.dp))
-            .background(Bar)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) { content() }
+    val scroll = rememberScrollState()
+    val shape = RoundedCornerShape(28.dp)
+    Box(Modifier.shadow(8.dp, shape).clip(shape).background(Bar)) {
+        Row(
+            Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { content() }
+        // a fading arrow on each side that still has buttons hidden beyond it
+        if (scroll.canScrollBackward) EdgeHint(G.ArrL, Alignment.CenterStart, true)
+        if (scroll.canScrollForward) EdgeHint(G.ArrR, Alignment.CenterEnd, false)
+    }
+}
+
+@Composable
+private fun BoxScope.EdgeHint(g: G, at: Alignment, fromStart: Boolean) {
+    val fade = if (fromStart) listOf(Bar, Color.Transparent) else listOf(Color.Transparent, Bar)
+    Box(
+        Modifier.align(at).fillMaxHeight().width(32.dp).background(Brush.horizontalGradient(fade)),
+        contentAlignment = Alignment.Center,
+    ) { Glyph(g, Muted, Modifier.graphicsLayer(scaleX = 0.6f, scaleY = 0.6f)) }
 }
 
 @Composable
