@@ -67,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.shadow
@@ -88,6 +89,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -347,7 +349,15 @@ fun EditorScreen(ed: Editor) {
                 .onGloballyPositioned { canvasOrigin = it.positionInRoot() }
                 .dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget),
         ) {
-            EditorCanvas(ed)
+            // any touch on the board closes the open panel; the touch still reaches the canvas
+            Box(
+                Modifier.fillMaxSize().pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        panel = Panel.NONE
+                    }
+                },
+            ) { EditorCanvas(ed) }
             QuickBar(ed, Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp))
             BoardBar(ed, Modifier.align(Alignment.TopCenter))
             ToolDial(ed, panel) { panel = if (panel == it) Panel.NONE else it }
@@ -739,7 +749,7 @@ private val dialGroups = listOf(
     DialGroup("Assets", listOf(panel(G.Library, "Library", Panel.ICONS), panel(G.Trace, "Trace", Panel.TRACE))),
 )
 
-private class DialRow(val g: G, val label: String, val active: Boolean, val small: Boolean = false, val onClick: () -> Unit)
+private class DialRow(val g: G, val label: String, val active: Boolean, val faded: Boolean = false, val small: Boolean = false, val onClick: () -> Unit)
 
 private val OnAccent: Color get() = if (Pal.dark) Color(0xFF0B1220) else Color.White
 
@@ -761,6 +771,7 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         open = false
         group = null
         ed.tool = Tool.SELECT
+        onPanel(Panel.NONE)
     }
     fun isOn(e: DialEntry) = (e.tool != null && e.tool == ed.tool) || (e.panel != null && e.panel == panel)
     fun pick(e: DialEntry) {
@@ -769,15 +780,22 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         open = false
         group = null
     }
+    // the group buttons form one column; an open group's tools form a second column beside it, level with its button
     val rows = ArrayList<DialRow>()
+    var subRows = emptyList<DialRow>()
+    var subAt = 0
     for (d in dialGroups) {
         val single = d.entries.singleOrNull()
+        val fade = group != null && group != d.name
         if (single != null) {
-            rows.add(DialRow(single.g, single.label, isOn(single)) { pick(single) })
+            rows.add(DialRow(single.g, single.label, isOn(single), fade) { pick(single) })
         } else {
             val act = d.entries.firstOrNull { isOn(it) }
-            rows.add(DialRow((act ?: d.entries[0]).g, d.name, act != null || group == d.name) { group = if (group == d.name) null else d.name })
-            if (group == d.name) for (e in d.entries) rows.add(DialRow(e.g, e.label, isOn(e), small = true) { pick(e) })
+            rows.add(DialRow((act ?: d.entries[0]).g, d.name, act != null || group == d.name, fade) { group = if (group == d.name) null else d.name })
+            if (group == d.name) {
+                subRows = d.entries.map { e -> DialRow(e.g, e.label, isOn(e), small = true) { pick(e) } }
+                subAt = rows.lastIndex
+            }
         }
     }
     val activeGlyph = dialGroups.flatMap { it.entries }.firstOrNull { it.tool != null && it.tool == ed.tool }?.g ?: G.Select
@@ -791,12 +809,29 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
         Layout(
             content = {
                 if (open) {
-                    Column(
+                    val shown = if (down) subAt else rows.lastIndex - subAt
+                    // dp from the top of the group column to the top of the tool column, so its middle sits level with the open button
+                    val mainH = rows.size * 58 - 10
+                    val subH = subRows.size * 50 - 10
+                    val subTop = (shown * 58 + 24 - subH / 2).coerceIn(0, maxOf(0, mainH - subH))
+                    Row(
                         Modifier.verticalScroll(rememberScrollState()).padding(4.dp),
-                        horizontalAlignment = if (right) Alignment.End else Alignment.Start,
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        for (r in if (down) rows else rows.asReversed()) DialRowView(r, right)
+                        val side = if (right) Alignment.End else Alignment.Start
+                        if (subRows.isNotEmpty() && right) {
+                            Column(Modifier.padding(top = subTop.dp), horizontalAlignment = side, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                for (r in subRows) DialRowView(r, right)
+                            }
+                        }
+                        Column(horizontalAlignment = side, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            for (r in if (down) rows else rows.asReversed()) DialRowView(r, right)
+                        }
+                        if (subRows.isNotEmpty() && !right) {
+                            Column(Modifier.padding(top = subTop.dp), horizontalAlignment = side, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                for (r in subRows) DialRowView(r, right)
+                            }
+                        }
                     }
                 }
                 Box(
@@ -851,7 +886,7 @@ private fun DialRowView(r: DialRow, labelLeft: Boolean) {
         .clickable(onClick = r.onClick)
     val labelShape = RoundedCornerShape(8.dp)
     Row(
-        Modifier.padding(horizontal = if (r.small) 4.dp else 0.dp),
+        Modifier.alpha(if (r.faded) 0.55f else 1f),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
