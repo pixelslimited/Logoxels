@@ -3,7 +3,18 @@ package ng.pixelslimited.logoxels.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -72,13 +83,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.toAndroidDragEvent
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
@@ -109,6 +120,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -311,7 +323,7 @@ fun EditorScreen(ed: Editor) {
         AlertDialog(
             onDismissRequest = { newConfirm = false },
             title = { Text("New project", fontSize = 16.sp) },
-            text = { Text("This clears every artboard and shape. Save the project first if you want to keep it.", fontSize = 12.sp) },
+            text = { Text("Clears every artboard and shape. Save first to keep it", fontSize = 12.sp) },
             confirmButton = {
                 TextButton({
                     newConfirm = false
@@ -384,16 +396,28 @@ fun EditorScreen(ed: Editor) {
             BoardBar(ed, Modifier.align(Alignment.TopCenter))
             ToolDial(ed, panel) { panel = if (panel == it) Panel.NONE else it }
         }
-        when (ed.tool) {
-            Tool.CORNERS -> CornersPanel(ed)
-            Tool.PEN -> PenPanel(ed)
-            Tool.KNIFE -> KnifePanel()
-            Tool.NODES -> NodesPanel(ed)
-            Tool.SCISSORS -> ScissorsPanel()
-            Tool.TEXT -> TextPanel(ed)
-            Tool.EYEDROPPER -> EyedropperPanel()
-            Tool.SKETCH -> SketchPanel(ed)
-            else -> when (panel) {
+        // old and new panels overlap while they swap
+        val hostKey: Any = when (ed.tool) {
+            Tool.CORNERS, Tool.PEN, Tool.KNIFE, Tool.NODES, Tool.SCISSORS, Tool.TEXT, Tool.EYEDROPPER, Tool.SKETCH -> ed.tool
+            else -> panel
+        }
+        AnimatedContent(
+            hostKey,
+            transitionSpec = {
+                (fadeIn(tween(Motion.ENTER, easing = LinearOutSlowInEasing)) + slideInVertically(tween(Motion.ENTER, easing = LinearOutSlowInEasing)) { it / 10 }) togetherWith
+                    fadeOut(tween(Motion.EXIT, easing = FastOutLinearInEasing))
+            },
+            label = "panel",
+        ) { key ->
+            when (key) {
+                Tool.CORNERS -> CornersPanel(ed)
+                Tool.PEN -> PenPanel(ed)
+                Tool.KNIFE -> KnifePanel()
+                Tool.NODES -> NodesPanel(ed)
+                Tool.SCISSORS -> ScissorsPanel()
+                Tool.TEXT -> TextPanel(ed)
+                Tool.EYEDROPPER -> EyedropperPanel()
+                Tool.SKETCH -> SketchPanel(ed)
                 Panel.STYLE -> StylePanel(ed)
                 Panel.COMBINE -> CombinePanel(ed)
                 Panel.TRANSFORM -> TransformPanel(ed)
@@ -403,7 +427,7 @@ fun EditorScreen(ed: Editor) {
                 Panel.ICONS -> IconsPanel(ed)
                 Panel.ARTBOARD -> ArtboardPanel(ed)
                 Panel.TRACE -> TracePanel(ed) { traceIn.launch(arrayOf("image/*")) }
-                Panel.NONE -> Unit
+                else -> Unit
             }
         }
     }
@@ -793,6 +817,8 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
     val gapPx = with(LocalDensity.current) { 10.dp.toPx() }.roundToInt()
     var open by remember { mutableStateOf(false) }
     var group by remember { mutableStateOf<String?>(null) }
+    var dragging by remember { mutableStateOf(false) }
+    val stretch by animateFloatAsState(if (dragging) 1.12f else 1f, tween(Motion.ENTER, easing = LinearOutSlowInEasing), label = "stretch")
     var pos by remember { mutableStateOf<Offset?>(null) }
     var area by remember { mutableStateOf(IntSize.Zero) }
     fun dismiss() {
@@ -834,9 +860,16 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
     val down = known && fab.y + fabPx / 2f < area.height / 2f
     Box(Modifier.fillMaxSize().onSizeChanged { area = it }) {
         if (open) Box(Modifier.fillMaxSize().pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); dismiss() } })
+        // rows grow out of the button and shrink back into it
+        val toward = TransformOrigin(if (right) 1f else 0f, if (down) 0f else 1f)
         Layout(
             content = {
-                if (open) {
+                AnimatedVisibility(
+                    open,
+                    enter = EnterTransition.None,
+                    exit = fadeOut(tween(Motion.EXIT, easing = FastOutLinearInEasing)) +
+                        scaleOut(tween(Motion.EXIT, easing = FastOutLinearInEasing), targetScale = 0.9f, transformOrigin = toward),
+                ) {
                     val shown = if (down) subAt else rows.lastIndex - subAt
                     // dp from the top of the group column to the top of the tool column, so its middle sits level with the open button
                     val mainH = rows.size * 58 - 10
@@ -849,15 +882,17 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
                         val side = if (right) Alignment.End else Alignment.Start
                         if (subRows.isNotEmpty() && right) {
                             Column(Modifier.padding(top = subTop.dp), horizontalAlignment = side, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                for (r in subRows) DialRowView(r, right)
+                                subRows.forEachIndexed { i, r -> DialRowView(r, right, i, 24.dp, 0.dp, TransformOrigin(1f, 0.5f)) }
                             }
                         }
                         Column(horizontalAlignment = side, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            for (r in if (down) rows else rows.asReversed()) DialRowView(r, right)
+                            (if (down) rows else rows.asReversed()).forEachIndexed { i, r ->
+                                DialRowView(r, right, i, 0.dp, if (down) (-16).dp else 16.dp, toward)
+                            }
                         }
                         if (subRows.isNotEmpty() && !right) {
                             Column(Modifier.padding(top = subTop.dp), horizontalAlignment = side, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                for (r in subRows) DialRowView(r, right)
+                                subRows.forEachIndexed { i, r -> DialRowView(r, right, i, (-24).dp, 0.dp, TransformOrigin(0f, 0.5f)) }
                             }
                         }
                     }
@@ -865,12 +900,14 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
                 Box(
                     Modifier
                         .size(56.dp)
+                        .pressScale()
+                        .graphicsLayer { scaleX = stretch }
                         .shadow(6.dp, CircleShape)
                         .background(Accent, CircleShape)
                         .clip(CircleShape)
                         .clickable { if (open) dismiss() else open = true }
                         .pointerInput(Unit) {
-                            detectDragGestures { change, drag ->
+                            detectDragGestures(onDragStart = { dragging = true }, onDragEnd = { dragging = false }, onDragCancel = { dragging = false }) { change, drag ->
                                 change.consume()
                                 val cur = pos ?: Offset(area.width - fabPx - marginPx, area.height - fabPx - marginPx)
                                 pos = Offset(
@@ -880,7 +917,7 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
                             }
                         },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(if (open) G.Close else activeGlyph, OnAccent) }
+                ) { Crossfade(if (open) G.Close else activeGlyph, animationSpec = tween(Motion.ENTER), label = "fab") { Glyph(it, OnAccent) } }
             },
             modifier = Modifier.fillMaxSize(),
         ) { ms, c ->
@@ -903,10 +940,18 @@ private fun ToolDial(ed: Editor, panel: Panel, onPanel: (Panel) -> Unit) {
 }
 
 @Composable
-private fun DialRowView(r: DialRow, labelLeft: Boolean) {
+private fun DialRowView(r: DialRow, labelLeft: Boolean, index: Int, fromX: Dp, fromY: Dp, origin: TransformOrigin) {
     val d = if (r.small) 40.dp else 48.dp
+    // each row eases out from the button, 30 ms after the one before it
+    val t = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        delay((index * Motion.STAGGER).toLong())
+        t.animateTo(1f, tween(Motion.ENTER, easing = LinearOutSlowInEasing))
+    }
+    val dim by animateFloatAsState(if (r.faded) 0.55f else 1f, tween(Motion.EXIT), label = "dim")
     val circle = Modifier
         .size(d)
+        .pressScale()
         .shadow(4.dp, CircleShape)
         .background(Accent, CircleShape)
         .then(if (r.active) Modifier.border(3.dp, Ink, CircleShape) else Modifier)
@@ -914,7 +959,15 @@ private fun DialRowView(r: DialRow, labelLeft: Boolean) {
         .clickable(onClick = r.onClick)
     val labelShape = RoundedCornerShape(8.dp)
     Row(
-        Modifier.alpha(if (r.faded) 0.55f else 1f),
+        Modifier.graphicsLayer {
+            alpha = t.value * dim
+            val k = Motion.POPOVER_START + (1f - Motion.POPOVER_START) * t.value
+            scaleX = k
+            scaleY = k
+            transformOrigin = origin
+            translationX = fromX.toPx() * (1f - t.value)
+            translationY = fromY.toPx() * (1f - t.value)
+        },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -955,6 +1008,12 @@ private fun PanelBox(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+/** Short explanation in regular grey, so titles stay the only bold text. */
+@Composable
+private fun Hint(text: String) {
+    Text(text, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
+}
+
 @Composable
 private fun Label(text: String) {
     Text(text, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
@@ -968,6 +1027,7 @@ private fun Swatch(color: Int?, selected: Boolean, onDouble: (() -> Unit)? = nul
     Box(
         Modifier
             .size(36.dp)
+            .pressScale()
             .clip(CircleShape)
             .background(if (color == null) Color.White else Color(color))
             .border(if (selected) 3.dp else 1.dp, ring, CircleShape)
@@ -1086,7 +1146,7 @@ private fun ColorDialog(initial: Int, onDone: (Int) -> Unit, onDismiss: () -> Un
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)).border(1.dp, Line, RoundedCornerShape(8.dp)))
+                    Box(Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)))
                     OutlinedTextField(
                         hex,
                         { t ->
@@ -1115,7 +1175,7 @@ private fun ArtboardPanel(ed: Editor) {
     val w = ed.artboard.width()
     val h = ed.artboard.height()
     PanelBox {
-        Label("Artboards (tap one on the canvas or here to work on it)")
+        Label("Artboards")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ed.boards.forEachIndexed { i, b ->
                 FilterChip(i == ed.activeBoard, { ed.selectBoard(i) }, { Text(b.name, fontSize = 12.sp) })
@@ -1135,7 +1195,7 @@ private fun ArtboardPanel(ed: Editor) {
         }
         SliderRow("Width", w, 100f..4000f, 0, ed::fitView) { ed.setArtboard(it, h) }
         SliderRow("Height", h, 100f..4000f, 0, ed::fitView) { ed.setArtboard(w, it) }
-        Label("Background (none stays transparent in PNG, PSD and SVG)")
+        Label("Background")
         ColorRow(ed.background, true) { ed.chooseBackground(it) }
     }
 }
@@ -1157,7 +1217,7 @@ private fun SketchPanel(ed: Editor) {
 @Composable
 private fun EyedropperPanel() {
     PanelBox {
-        Label("Select shapes first, then tap the shape whose colour you want to copy. With nothing selected it sets the colour for new shapes.")
+        Hint("Tap a shape to copy its colour to the selection, or to new shapes when nothing is selected")
     }
 }
 
@@ -1179,12 +1239,12 @@ private fun StylePanel(ed: Editor) {
         if (first == null) {
             Label("Fill for new shapes")
             ColorRow(ed.nextFill, false) { ed.setFill(it) }
-            Label("Select a shape to change its fill, stroke and corners.")
+            Hint("Select a shape to edit it")
             return@PanelBox
         }
         val pic = sel.firstNotNullOfOrNull { it.image }
         if (pic != null) {
-            Label("Colours in this picture (tap to use)")
+            Label("Picture colours")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (c in pic.palette) Swatch(c, false) { ed.useColor(c) }
             }
@@ -1232,7 +1292,7 @@ private fun PenPanel(ed: Editor) {
     ed.version
     val n = ed.pen.size
     PanelBox {
-        Label("Tap to add corner points. Drag to pull out a curve. Tap the green first point to close.")
+        Hint("Tap to add points, drag for curves, tap the green point to close")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Finish open", n >= 2) { ed.penFinish(false) }
             Act("Close shape", n >= 3) { ed.penFinish(true) }
@@ -1245,7 +1305,7 @@ private fun PenPanel(ed: Editor) {
 @Composable
 private fun KnifePanel() {
     PanelBox {
-        Label("Drag a line across shapes to cut them along it. With a selection, only the selected shapes are cut.")
+        Hint("Drag a line across shapes to cut them")
     }
 }
 
@@ -1256,7 +1316,7 @@ private fun TextPanel(ed: Editor) {
     val spec = item?.text
     PanelBox {
         if (item == null || spec == null) {
-            Label("Tap the canvas to add text, or tap existing text to edit it. To put text on a path, in a shape or around objects, turn on Multi and select the text and the shape.")
+            Hint("Tap the canvas to add text, or tap text to edit it. Select text and a shape together to fit it to the shape")
             return@PanelBox
         }
         var tv by remember(item.id) { mutableStateOf(spec.text) }
@@ -1288,7 +1348,7 @@ private fun TextPanel(ed: Editor) {
             }
             if (spec.warp != Warp.NONE) SliderRow("Bend", spec.amount * 100f, -100f..100f, 0, ed::endSlide) { ed.setWarpAmount(it / 100f) }
         } else {
-            Label("In shape and Flow around fill the first selected shape. Plain brings the text back to a free line.")
+            Hint("Shape modes use the first selected shape")
         }
     }
 }
@@ -1299,7 +1359,7 @@ private fun IconsPanel(ed: Editor) {
         Icons.sections.map { (title, list) -> title to list.map { (name, d) -> Triple(name, d, Icons.path(d).asComposePath()) } }
     }
     PanelBox {
-        Label("Tap a shape to add it. Colour, round, cut and combine it like any other shape.")
+        Hint("Tap a shape to add it")
         for ((title, icons) in sections) {
             Text(title, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1327,7 +1387,7 @@ private fun TracePanel(ed: Editor, onPick: () -> Unit) {
             FilterChip(ed.traceSmooth, { ed.tuneSmooth(!ed.traceSmooth) }, { Text("Smooth curves", fontSize = 12.sp) })
         }
         if (ed.trace == null) {
-            Label("Pick a logo, sketch or photo. Its dark areas become an editable vector shape.")
+            Hint("Pick a logo, sketch or photo to turn its dark areas into a vector shape")
         } else {
             SliderRow("Threshold", ed.traceThreshold, 1f..254f, 0, ed::endSlide) { ed.tuneThreshold(it) }
         }
@@ -1337,7 +1397,7 @@ private fun TracePanel(ed: Editor, onPick: () -> Unit) {
 @Composable
 private fun ScissorsPanel() {
     PanelBox {
-        Label("Tap an outline to cut it open at that spot. Closed shapes become open paths.")
+        Hint("Tap an outline to cut it open")
     }
 }
 
@@ -1347,10 +1407,10 @@ private fun NodesPanel(ed: Editor) {
     val has = ed.nodeSel != null
     PanelBox {
         if (ed.selectedItems().size != 1) {
-            Label("Tap a shape to edit its points.")
+            Hint("Tap a shape to edit its points")
             return@PanelBox
         }
-        Label("Drag a point or its handles. Tap the outline to add a point. Editing turns the shape into a free path.")
+        Hint("Drag points or handles, tap the outline to add a point")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Smooth", has) { ed.nodeMakeSmooth() }
             Act("Corner", has) { ed.nodeMakeCorner() }
@@ -1370,7 +1430,7 @@ private fun GridPanel(ed: Editor) {
             FilterChip(ed.showRulers, { ed.showRulers = !ed.showRulers }, { Text("Rulers", fontSize = 12.sp) })
         }
         SliderRow("Grid size", ed.gridSize, 10f..100f, 8, {}) { ed.gridSize = it }
-        Label("Guides: drag one off the canvas to remove it.")
+        Hint("Drag a guide off the canvas to remove it")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Vertical guide", true) { ed.addGuide(true) }
             Act("Horizontal guide", true) { ed.addGuide(false) }
@@ -1388,7 +1448,7 @@ private fun LayersPanel(ed: Editor) {
     var dragDy by remember { mutableFloatStateOf(0f) }
     PanelBox {
         if (ed.items.isEmpty()) {
-            Label("No shapes yet.")
+            Hint("No shapes yet")
             return@PanelBox
         }
         // top layer first; a row follows the finger while its handle is dragged and the others make room
@@ -1470,17 +1530,17 @@ private fun CornersPanel(ed: Editor) {
     val item = ed.selectedItems().singleOrNull()
     PanelBox {
         if (item == null) {
-            Label("Tap a shape to select it. Its corners appear as dots.")
+            Hint("Tap a shape to see its corners")
             return@PanelBox
         }
         if (item.kind == Kind.ELLIPSE) {
-            Label("An oval has no corners. Merge it with other shapes using Combine, then round the new corners here.")
+            Hint("Ovals have no corners. Combine them with other shapes first")
             return@PanelBox
         }
         SliderRow("All corners", item.corner, 0f..300f, 0, ed::endSlide) { ed.setCorner(it) }
         val sel = ed.cornerSel
         if (sel == null) {
-            Label("Tap a corner dot on the canvas to round only that corner.")
+            Hint("Tap a corner dot to round only that corner")
         } else {
             SliderRow("Corner ${sel + 1}", item.radiusAt(sel), 0f..300f, 0, ed::endSlide) { ed.setCornerSelected(it) }
         }
@@ -1515,10 +1575,10 @@ private fun CombinePanel(ed: Editor) {
             CombineBtn(G.Intersect, "Intersect", ok) { ed.combine(PfOp.INTERSECT) }
             CombineBtn(G.Exclude, "Exclude", ok) { ed.combine(PfOp.EXCLUDE) }
         }
-        Label(if (ok) "Result keeps the bottom shape's colours." else "Turn on Multi, then tap two or more shapes.")
+        Hint(if (ok) "Result keeps the bottom shape's colours" else "Turn on Multi, then tap two or more shapes")
         val sel = ed.selectedItems()
         var dist by remember { mutableFloatStateOf(10f) }
-        Label("Outline and offset (+ grows, - shrinks)")
+        Label("Outline and offset")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Outline stroke", sel.any { it.stroke != null && it.strokeWidth > 0f && it.image == null }) { ed.outlineStroke() }
             Act("Apply offset", sel.any { it.fill != null && it.image == null }) { ed.offsetPath(dist) }
@@ -1550,7 +1610,7 @@ private fun NumField(label: String, value: Float, modifier: Modifier, clearAfter
 
 @Composable
 private fun Act(label: String, enabled: Boolean, onClick: () -> Unit) {
-    OutlinedButton(onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 12.dp)) {
+    OutlinedButton(onClick, Modifier.pressScale(), enabled = enabled, contentPadding = PaddingValues(horizontal = 12.dp)) {
         Text(label, fontSize = 12.sp)
     }
 }
@@ -1560,7 +1620,7 @@ private fun TransformPanel(ed: Editor) {
     ed.version
     val r = ed.selectionRect()
     PanelBox {
-        Label("Position and size (from artboard corner)")
+        Label("Position and size")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val m = Modifier.weight(1f)
             NumField("X", r?.left ?: 0f, m) { ed.setSelectionRect(it, null, null, null) }
@@ -1570,7 +1630,7 @@ private fun TransformPanel(ed: Editor) {
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             NumField("Turn by (deg)", 0f, Modifier.width(140.dp), clearAfter = true) { ed.rotateSelection(it) }
-            Text(if (r == null) "Select a shape first." else "Keeps ratio when Ratio is on.", fontSize = 12.sp, color = Muted)
+            Text(if (r == null) "Select a shape first" else "Ratio lock applies", fontSize = 12.sp, color = Muted)
         }
     }
 }
@@ -1587,16 +1647,16 @@ private fun PreviewPanel(ed: Editor) {
             Text("Nothing on this artboard yet.", fontSize = 12.sp, color = Muted)
             return@PanelBox
         }
-        Label("On light and dark, at 16, 32 and 48 px")
+        Label("Light and dark")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PreviewTile(bmp, Color.White, Modifier.weight(1f))
             PreviewTile(bmp, dark, Modifier.weight(1f))
         }
-        Label("As a phone app icon")
+        Label("App icon")
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color(0xFF14532D), Color(0xFF0F172A))), RoundedCornerShape(16.dp))
+                .background(Color(0xFF14532D), RoundedCornerShape(12.dp))
                 .horizontalScroll(rememberScrollState())
                 .padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -1613,7 +1673,7 @@ private fun PreviewPanel(ed: Editor) {
 private fun PreviewTile(bmp: ImageBitmap, bg: Color, modifier: Modifier) {
     val shape = RoundedCornerShape(12.dp)
     Column(
-        modifier.background(bg, shape).border(1.dp, Line, shape).padding(10.dp),
+        modifier.background(bg, shape).padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -1640,7 +1700,7 @@ private fun AppIcon(bmp: ImageBitmap, bg: Color, name: String) {
 @Composable
 private fun QPill(content: @Composable () -> Unit) {
     val scroll = rememberScrollState()
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(14.dp)
     Box(Modifier.shadow(8.dp, shape).clip(shape).background(Bar)) {
         Row(
             Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
@@ -1688,6 +1748,7 @@ private fun QBtn(g: G, label: String, enabled: Boolean = true, active: Boolean =
     }
     Column(
         Modifier
+            .pressScale()
             .widthIn(min = 56.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(if (active) SelBg else Color.Transparent)
@@ -1718,8 +1779,10 @@ private fun QuickBar(ed: Editor, modifier: Modifier) {
     fun pick(k: String) { open = if (open == k) "" else k }
     AnimatedVisibility(
         show, modifier.padding(8.dp),
-        enter = fadeIn() + slideInVertically { it / 2 },
-        exit = fadeOut() + slideOutVertically { it / 2 },
+        enter = fadeIn(tween(Motion.ENTER, easing = LinearOutSlowInEasing)) +
+            scaleIn(tween(Motion.ENTER, easing = LinearOutSlowInEasing), Motion.POPOVER_START, TransformOrigin(0.5f, 1f)) +
+            slideInVertically(tween(Motion.ENTER, easing = LinearOutSlowInEasing)) { it / 2 },
+        exit = fadeOut(tween(Motion.EXIT, easing = FastOutLinearInEasing)) + slideOutVertically(tween(Motion.EXIT, easing = FastOutLinearInEasing)) { it / 2 },
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (open.isNotEmpty()) QPill {
@@ -1795,7 +1858,10 @@ private fun BoardBar(ed: Editor, modifier: Modifier) {
     val moving = ed.boardMoveOn
     val show = (i != null && i in ed.boards.indices) || moving
     val name = if (show) ed.boards.getOrNull(ed.activeBoard)?.name.orEmpty() else ""
-    AnimatedVisibility(show, modifier.padding(8.dp), enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut() + slideOutVertically { -it / 2 }) {
+    AnimatedVisibility(show, modifier.padding(8.dp), enter = fadeIn(tween(Motion.ENTER, easing = LinearOutSlowInEasing)) +
+            scaleIn(tween(Motion.ENTER, easing = LinearOutSlowInEasing), Motion.POPOVER_START, TransformOrigin(0.5f, 0f)) +
+            slideInVertically(tween(Motion.ENTER, easing = LinearOutSlowInEasing)) { -it / 2 },
+        exit = fadeOut(tween(Motion.EXIT, easing = FastOutLinearInEasing)) + slideOutVertically(tween(Motion.EXIT, easing = FastOutLinearInEasing)) { -it / 2 }) {
         QPill {
             Text(name, fontSize = 12.sp, color = Ink, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp))
             if (moving) {
