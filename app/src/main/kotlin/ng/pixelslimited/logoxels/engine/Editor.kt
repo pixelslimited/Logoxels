@@ -1537,8 +1537,8 @@ class Editor {
         } else {
             var ex = doc.x
             var ey = doc.y
-            if (lockRatio) {
-                // a square box, so ovals come out as circles and polygons and stars stay regular
+            if (lockRatio && c.kind != Kind.RECT) {
+                // a square box, so ovals come out as circles and polygons and stars stay regular; rectangles go as drawn
                 val side = max(abs(ex - downDoc.x), abs(ey - downDoc.y))
                 ex = downDoc.x + if (ex >= downDoc.x) side else -side
                 ey = downDoc.y + if (ey >= downDoc.y) side else -side
