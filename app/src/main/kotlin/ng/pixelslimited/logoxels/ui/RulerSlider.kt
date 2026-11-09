@@ -15,6 +15,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.floor
@@ -38,7 +42,7 @@ fun RulerSlider(
     val finished by rememberUpdatedState(onValueChangeFinished)
     val step = (valueRange.endInclusive - valueRange.start) / steps
     Box(
-        modifier.fillMaxWidth().height(44.dp).pointerInput(valueRange, steps) {
+        modifier.fillMaxWidth().height(44.dp).semantics { progressBarRangeInfo = ProgressBarRangeInfo(value.coerceIn(valueRange), valueRange, steps - 1); setProgress { t -> change(t.coerceIn(valueRange.start, valueRange.endInclusive)); true } }.pointerInput(valueRange, steps) {
             val tickPx = 10.dp.toPx()
             var lastIdx = ((current - valueRange.start) / step).roundToInt()
             detectHorizontalDragGestures(onDragEnd = { finished?.invoke() }, onDragCancel = { finished?.invoke() }) { pointer, dx ->

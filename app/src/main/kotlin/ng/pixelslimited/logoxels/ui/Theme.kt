@@ -22,7 +22,7 @@ internal val Accent: Color get() = if (Pal.dark) Color(0xFF4ADE80) else Color(0x
 internal val Bar: Color get() = if (Pal.dark) Color(0xFF1F2937) else Color.White
 internal val Back: Color get() = if (Pal.dark) Color(0xFF0B1220) else Color(0xFFECEFF1)
 internal val PanelBg: Color get() = if (Pal.dark) Color(0xFF111827) else Color(0xFFF8FAFC)
-internal val SelBg: Color get() = if (Pal.dark) Color(0xFF134E4A) else Color(0xFFCCFBF1)
+internal val SelBg: Color get() = if (Pal.dark) Color(0xFF14532D) else Color(0xFFDCFCE7)
 internal val Line: Color get() = if (Pal.dark) Color(0xFF4B5563) else Color(0xFFD1D5DB)
 
 /**

@@ -5,9 +5,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
