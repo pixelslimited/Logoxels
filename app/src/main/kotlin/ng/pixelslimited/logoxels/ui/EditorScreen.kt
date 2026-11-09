@@ -456,6 +456,8 @@ private fun EditorCanvas(ed: Editor) {
         }
     }
     val rulerBg = remember { APaint().apply { color = android.graphics.Color.WHITE } }
+    val dotInk = Ink
+    val dotPaint = remember(dotInk) { APaint().apply { color = dotInk.copy(alpha = 0.16f).toArgb(); strokeWidth = 3f; strokeCap = android.graphics.Paint.Cap.ROUND; isAntiAlias = true } }
     val rulerInk = remember { APaint(APaint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(75, 85, 99) } }
     LaunchedEffect(ed) {
         snapshotFlow { ed.motionTick }.collectLatest {
@@ -530,6 +532,16 @@ private fun EditorCanvas(ed: Editor) {
         val s = ed.scale
         val tx = ed.tx
         val ty = ed.ty
+        // Dot grid on the pasteboard: gives the empty space depth and a sense of scale; it pans with the board.
+        val step = 28f
+        val x0 = ((tx % step) + step) % step
+        val y0 = ((ty % step) + step) % step
+        val cols = (size.width / step).toInt() + 1
+        val rows = (size.height / step).toInt() + 1
+        val dots = FloatArray(cols * rows * 2)
+        var di = 0
+        for (r in 0 until rows) for (k in 0 until cols) { dots[di++] = x0 + k * step; dots[di++] = y0 + r * step }
+        drawContext.canvas.nativeCanvas.drawPoints(dots, dotPaint)
         drawIntoCanvas { c ->
             val nc = c.nativeCanvas
             nc.save()
