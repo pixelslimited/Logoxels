@@ -65,7 +65,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -1267,7 +1266,7 @@ private fun EyedropperPanel() {
 private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int = 0, onEnd: () -> Unit, onChange: (Float) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, fontSize = 12.sp, color = Ink, modifier = Modifier.width(104.dp))
-        Slider(value.coerceIn(range), onChange, Modifier.weight(1f), valueRange = range, steps = steps, onValueChangeFinished = onEnd)
+        RulerSlider(value.coerceIn(range), onChange, Modifier.weight(1f), valueRange = range, steps = if (steps > 0) steps + 1 else 100, onValueChangeFinished = onEnd)
         Text(value.roundToInt().toString(), fontSize = 12.sp, color = Ink, modifier = Modifier.width(36.dp))
     }
 }
