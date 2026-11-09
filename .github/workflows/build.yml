@@ -24,9 +24,11 @@ jobs:
       - name: Fetch interface font (open licence, Century Gothic style)
         run: |
           mkdir -p app/src/main/assets/fonts
-          base=https://raw.githubusercontent.com/google/fonts/main/ofl/didactgothic
+          base=https://raw.githubusercontent.com/google/fonts/4be3f642b64e428908c337fd95a1ef79c3a6c595/ofl/didactgothic
           curl -fsSL "$base/DidactGothic-Regular.ttf" -o app/src/main/assets/fonts/ui.ttf
           curl -fsSL "$base/OFL.txt" -o app/src/main/assets/fonts/OFL.txt
+          # Pinned to a commit and verified, so a changed upstream file fails the build instead of shipping.
+          printf '%s  %s\n' b98f9e091b6337a86f4e0f69c94c31905e1e287782853f472e176b4e28d3f81f app/src/main/assets/fonts/ui.ttf 36e2f1debc9778bac79fac1a0cb5a5ef51c102f00b58ef7d8a05324144b68166 app/src/main/assets/fonts/OFL.txt | sha256sum -c -
           ls -l app/src/main/assets/fonts
       - name: Load signing key
         env:

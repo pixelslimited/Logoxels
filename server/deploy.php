@@ -1,4 +1,6 @@
 <?php
+// Cron only: never runs when requested over the web.
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 // Copies the newest Logoxels build from GitHub onto this site. Run from cron, e.g. every 10 minutes.
 // Private repo: put a read-only GitHub token (Contents: read) in /home/pixelsli/.logoxels_token.
 $repo = 'pixelslimited/Logoxels';
@@ -13,7 +15,7 @@ function fetch($url, $token, $accept, $file = null) {
     $h = ['Accept: ' . $accept, 'User-Agent: logoxels-deploy'];
     if ($token !== '') $h[] = 'Authorization: Bearer ' . $token;
     $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_FOLLOWLOCATION => true, CURLOPT_HTTPHEADER => $h, CURLOPT_TIMEOUT => 600, CURLOPT_FAILONERROR => false]);
+    curl_setopt_array($ch, [CURLOPT_FOLLOWLOCATION => true, CURLOPT_HTTPHEADER => $h, CURLOPT_TIMEOUT => 600, CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS, CURLOPT_FAILONERROR => false]);
     $fp = null;
     if ($file) { $fp = fopen($file, 'wb'); curl_setopt($ch, CURLOPT_FILE, $fp); } else { curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); }
     $body = curl_exec($ch);
@@ -41,6 +43,10 @@ if ($code !== 200 || !is_file($tmp) || filesize($tmp) < 1000000 || file_get_cont
     @unlink($tmp); say("download failed: HTTP $code"); exit(1);
 }
 $sha = hash_file('sha256', $tmp);
+// GitHub publishes each asset's digest; refuse a download that does not match it.
+if (preg_match('/^sha256:([a-f0-9]{64})$/', (string) ($asset['digest'] ?? ''), $dm) && !hash_equals($dm[1], $sha)) {
+    @unlink($tmp); say("build $build: checksum mismatch, not published"); exit(1);
+}
 $size = filesize($tmp);
 rename($tmp, "$web/Logoxels.apk");
 $json = json_encode(['build' => $build, 'url' => 'https://logoxels.pixelslimited.ng/Logoxels.apk', 'size' => $size, 'sha256' => $sha], JSON_UNESCAPED_SLASHES);
