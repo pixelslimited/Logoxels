@@ -122,4 +122,31 @@ class NodesTest {
         Nodes.makeCorner(nps[0], 1)
         assertTrue(Nodes.same(nd.hin, nd.p) && Nodes.same(nd.hout, nd.p))
     }
+
+    @Test
+    fun toggleSegmentFlipsLineAndCurve() {
+        val np = Nodes.fromContours(listOf(square()))[0]
+        assertTrue(Nodes.isLine(np, 0))
+        Nodes.toggleSegment(np, 0)
+        assertFalse(Nodes.isLine(np, 0))
+        Nodes.toggleSegment(np, 0)
+        assertTrue(Nodes.isLine(np, 0))
+    }
+
+    @Test
+    fun pullSegmentMovesTheCurveTowardsTheDrag() {
+        val np = Nodes.fromContours(listOf(square()))[0]
+        Nodes.pullSegment(np, 0, 0.5, P(0.0, -40.0))
+        val mid = Nodes.segAt(np, 0).at(0.5)
+        assertEquals(-40.0, mid.y, 1e-6)
+        assertEquals(50.0, mid.x, 1e-6)
+    }
+
+    @Test
+    fun cutManySplitsClosedOutlineAtEveryPoint() {
+        val np = Nodes.fromContours(listOf(square()))[0]
+        val parts = Nodes.cutMany(np, listOf(2, 0))
+        assertEquals(2, parts.size)
+        assertTrue(parts.all { !it.closed })
+    }
 }

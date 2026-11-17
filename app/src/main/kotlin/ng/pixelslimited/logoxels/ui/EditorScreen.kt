@@ -134,6 +134,7 @@ import ng.pixelslimited.logoxels.engine.Icons
 import ng.pixelslimited.logoxels.engine.ImageLoad
 import ng.pixelslimited.logoxels.engine.Kind
 import ng.pixelslimited.logoxels.engine.Mode
+import ng.pixelslimited.logoxels.engine.NodeRef
 import ng.pixelslimited.logoxels.engine.PfOp
 import ng.pixelslimited.logoxels.engine.Picture
 import ng.pixelslimited.logoxels.engine.SvgDoc
@@ -144,6 +145,7 @@ import ng.pixelslimited.logoxels.engine.TextMode
 import ng.pixelslimited.logoxels.engine.geom.Warp
 import ng.pixelslimited.logoxels.engine.Tool
 import kotlin.math.floor
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import android.graphics.Paint as APaint
 import android.widget.Toast
@@ -606,24 +608,36 @@ private fun EditorCanvas(ed: Editor) {
         }
         if (ed.tool == Tool.NODES) {
             val orange = Color(0xFFEA580C)
-            val picked = ed.nodeSel
-            for ((ci, np) in ed.nodePaths().withIndex()) {
-                for ((ni, nd) in np.nodes.withIndex()) {
-                    val c = ed.toScreen(nd.p.x.toFloat(), nd.p.y.toFloat())
-                    val on = picked != null && picked.first == ci && picked.second == ni
-                    if (on) {
-                        for (h in listOf(nd.hin, nd.hout)) {
-                            if (h.x == nd.p.x && h.y == nd.p.y) continue
-                            val hs = ed.toScreen(h.x.toFloat(), h.y.toFloat())
-                            drawLine(orange, c, hs, 2f)
-                            drawCircle(Color.White, 9f, hs)
-                            drawCircle(orange, 9f, hs, style = Stroke(width = 3f))
+            val picked = ed.nodeSels
+            val only = picked.singleOrNull()
+            for ((id, paths) in ed.nodeLayers()) {
+                for ((ci, np) in paths.withIndex()) {
+                    for ((ni, nd) in np.nodes.withIndex()) {
+                        val c = ed.toScreen(nd.p.x.toFloat(), nd.p.y.toFloat())
+                        val ref = NodeRef(id, ci, ni)
+                        val on = ref in picked
+                        if (ref == only) {
+                            for (h in listOf(nd.hin, nd.hout)) {
+                                if (h.x == nd.p.x && h.y == nd.p.y) continue
+                                val hs = ed.toScreen(h.x.toFloat(), h.y.toFloat())
+                                drawLine(orange, c, hs, 2f)
+                                drawCircle(Color.White, 9f, hs)
+                                drawCircle(orange, 9f, hs, style = Stroke(width = 3f))
+                            }
                         }
+                        val o = Offset(c.x - 10f, c.y - 10f)
+                        drawRect(if (on) orange else Color.White, o, Size(20f, 20f))
+                        drawRect(if (on) orange else Accent, o, Size(20f, 20f), style = Stroke(width = 3f))
                     }
-                    val o = Offset(c.x - 10f, c.y - 10f)
-                    drawRect(if (on) orange else Color.White, o, Size(20f, 20f))
-                    drawRect(if (on) orange else Accent, o, Size(20f, 20f), style = Stroke(width = 3f))
                 }
+            }
+            ed.marquee?.let { (a, b) ->
+                val sa = ed.toScreen(a.x, a.y)
+                val sb = ed.toScreen(b.x, b.y)
+                val tl = Offset(minOf(sa.x, sb.x), minOf(sa.y, sb.y))
+                val sz = Size(abs(sa.x - sb.x), abs(sa.y - sb.y))
+                drawRect(orange.copy(alpha = 0.12f), tl, sz)
+                drawRect(orange, tl, sz, style = Stroke(width = 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 9f))))
             }
         }
         if (ed.tool == Tool.CORNERS) {
@@ -1476,16 +1490,25 @@ private fun ScissorsPanel() {
 @Composable
 private fun NodesPanel(ed: Editor) {
     ed.version
-    val has = ed.nodeSel != null
+    val has = ed.nodeSels.isNotEmpty()
     PanelBox {
-        if (ed.selectedItems().size != 1) {
+        if (ed.selectedItems().isEmpty()) {
             Hint("Tap a shape to edit its points")
             return@PanelBox
         }
-        Hint("Drag points or handles, tap the outline to add a point")
+        Hint("Drag a point, a handle or the curve itself. Tap an outline to add a point")
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip(ed.nodeBox, { ed.nodeBox = !ed.nodeBox }, { Text("Box select", fontSize = 12.sp) })
+            Chip(ed.multi, { ed.multi = !ed.multi }, { Text("Add to selection", fontSize = 12.sp) })
+            Chip(ed.nodeFree, { ed.nodeFree = !ed.nodeFree }, { Text("Free handles", fontSize = 12.sp) })
+            Act("All points", true) { ed.nodeSelectAll() }
+        }
         Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Smooth", has) { ed.nodeMakeSmooth() }
             Act("Corner", has) { ed.nodeMakeCorner() }
+            Act("Line or curve", has) { ed.nodeToggleSegment() }
+            Act("Align across", ed.nodeSels.size > 1) { ed.nodeAlign(true) }
+            Act("Align down", ed.nodeSels.size > 1) { ed.nodeAlign(false) }
             Act("Delete point", has) { ed.nodeRemove() }
             Act("Cut here", has) { ed.nodeCutHere() }
         }

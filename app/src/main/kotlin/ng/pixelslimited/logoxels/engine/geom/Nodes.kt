@@ -155,4 +155,55 @@ object Nodes {
         for (k in i + 1 until n) b.add(np.nodes[k])
         return listOf(NodePath(false, a), NodePath(false, b))
     }
+
+    fun isLine(np: NodePath, i: Int): Boolean {
+        val a = np.nodes[i]
+        val b = np.nodes[(i + 1) % np.nodes.size]
+        return same(a.hout, a.p) && same(b.hin, b.p)
+    }
+
+    /** Turns segment [i] into a curve (handles at the thirds) or back into a straight line. */
+    fun toggleSegment(np: NodePath, i: Int) {
+        val a = np.nodes[i]
+        val b = np.nodes[(i + 1) % np.nodes.size]
+        if (isLine(np, i)) {
+            a.hout = a.p.lerp(b.p, 1.0 / 3.0)
+            b.hin = a.p.lerp(b.p, 2.0 / 3.0)
+        } else {
+            a.hout = a.p
+            b.hin = b.p
+        }
+    }
+
+    /** Drags the outline point at [t] of segment [i] by [d], reshaping the curve through the two handles; a line becomes a curve. */
+    fun pullSegment(np: NodePath, i: Int, t: Double, d: P) {
+        if (isLine(np, i)) toggleSegment(np, i)
+        val a = np.nodes[i]
+        val b = np.nodes[(i + 1) % np.nodes.size]
+        val u = t.coerceIn(0.15, 0.85)
+        val k = 1.0 / (3.0 * u * (1.0 - u))
+        a.hout = a.hout + d * k
+        b.hin = b.hin + d * k
+    }
+
+    /** Cuts the outline open at every listed point ([idx] sorted high to low); returns the resulting pieces. */
+    fun cutMany(np: NodePath, idx: List<Int>): List<NodePath> {
+        val n = np.nodes.size
+        var cur = np
+        var order = idx
+        if (np.closed) {
+            val i0 = idx.first()
+            cur = cut(np, i0)[0]
+            order = idx.drop(1).map { (it - i0 + n) % n }.sortedDescending()
+        }
+        val out = ArrayList<NodePath>()
+        for (k in order) {
+            if (k <= 0 || k >= cur.nodes.size - 1) continue
+            val parts = cut(cur, k)
+            out.add(0, parts[1])
+            cur = parts[0]
+        }
+        out.add(0, cur)
+        return out
+    }
 }
