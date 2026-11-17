@@ -1303,6 +1303,11 @@ class Editor {
         }
     }
 
+    /** Adds an icon from the bundled libraries as editable shapes (outline sets stay as strokes, filled sets as fills). */
+    fun insertLibIcon(svg: String) {
+        SvgImport.parse(svg)?.let { importSvg(it) }
+    }
+
     // ---------- numeric transform ----------
     /** Position and size of the selection in artboard units, measured from the active artboard's top-left. */
     fun selectionRect(): RectF? = selectionBox()?.also { it.offset(-artboard.left, -artboard.top) }

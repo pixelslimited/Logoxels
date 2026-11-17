@@ -71,6 +71,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
@@ -100,6 +101,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Path as CPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -131,6 +135,7 @@ import ng.pixelslimited.logoxels.engine.Editor
 import ng.pixelslimited.logoxels.engine.Export
 import ng.pixelslimited.logoxels.engine.GKind
 import ng.pixelslimited.logoxels.engine.Icons
+import ng.pixelslimited.logoxels.engine.IconLibs
 import ng.pixelslimited.logoxels.engine.ImageLoad
 import ng.pixelslimited.logoxels.engine.Kind
 import ng.pixelslimited.logoxels.engine.Mode
@@ -146,6 +151,7 @@ import ng.pixelslimited.logoxels.engine.geom.Warp
 import ng.pixelslimited.logoxels.engine.Tool
 import kotlin.math.floor
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 import android.graphics.Paint as APaint
 import android.widget.Toast
@@ -1441,25 +1447,65 @@ private fun TextPanel(ed: Editor) {
 
 @Composable
 private fun IconsPanel(ed: Editor) {
+    val ctx = LocalContext.current
     val sections = remember {
         Icons.sections.map { (title, list) -> title to list.map { (name, d) -> Triple(name, d, Icons.path(d).asComposePath()) } }
     }
+    var lib by remember { mutableIntStateOf(-1) }
+    var query by remember { mutableStateOf("") }
+    var shown by remember { mutableIntStateOf(30) }
     PanelBox {
-        Hint("Tap a shape to add it")
-        for ((title, icons) in sections) {
-            Text(title, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
-            Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((name, d, path) in icons) {
-                    Column(
-                        Modifier.width(68.dp).clip(RoundedCornerShape(12.dp)).clickable { ed.insertIcon(d) }.padding(6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Canvas(Modifier.size(40.dp)) { scale(size.width / 100f, Offset.Zero) { drawPath(path, Ink) } }
-                        Text(name, fontSize = 12.sp, color = Ink)
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip(lib < 0, { lib = -1 }, { Text("Shapes", fontSize = 12.sp) })
+            IconLibs.libs.forEachIndexed { i, l -> Chip(lib == i, { lib = i; shown = 30 }, { Text(l.title, fontSize = 12.sp) }) }
+        }
+        if (lib < 0) {
+            Hint("Tap a shape to add it")
+            for ((title, icons) in sections) {
+                Text(title, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
+                Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for ((name, d, path) in icons) {
+                        Column(
+                            Modifier.width(68.dp).clip(RoundedCornerShape(12.dp)).clickable { ed.insertIcon(d) }.padding(6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Canvas(Modifier.size(40.dp)) { scale(size.width / 100f, Offset.Zero) { drawPath(path, Ink) } }
+                            Text(name, fontSize = 12.sp, color = Ink)
+                        }
                     }
                 }
             }
+            return@PanelBox
         }
+        val all = remember(lib) { IconLibs.load(ctx, IconLibs.libs[lib].id) }
+        val found = remember(lib, query) { IconLibs.search(all, query) }
+        OutlinedTextField(query, { query = it; shown = 30 }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true, label = { Text("Search ${all.size} icons", fontSize = 12.sp) })
+        Hint(if (IconLibs.libs[lib].id.contains("outline") || IconLibs.libs[lib].id == "lucide") "Line icons keep their stroke; Phosphor sets are solid outlines" else "Tap an icon to add it")
+        for (row in found.take(shown).chunked(5)) {
+            Row(Modifier.fillMaxWidth()) {
+                for ((name, svg) in row) {
+                    val doc = remember(svg) { SvgImport.parse(svg) }
+                    Column(
+                        Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable { ed.insertLibIcon(svg) }.padding(vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Canvas(Modifier.size(34.dp)) {
+                            if (doc != null) scale(size.width / max(doc.w, doc.h), Offset.Zero) {
+                                for (sh in doc.shapes) {
+                                    val cp = sh.path.asComposePath()
+                                    if (sh.fill != null) drawPath(cp, Ink)
+                                    if (sh.stroke != null) drawPath(cp, Ink, style = Stroke(width = sh.strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                                }
+                            }
+                        }
+                        Text(name, fontSize = 12.sp, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        if (found.isEmpty()) Hint("No icon matches")
+        if (found.size > shown) Act("Show more (${found.size - shown} left)", true) { shown += 30 }
     }
 }
 
