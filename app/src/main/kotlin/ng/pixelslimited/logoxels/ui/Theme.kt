@@ -16,15 +16,15 @@ internal object Pal {
     var dark by mutableStateOf(false)
 }
 
-// Set in OKLCH so the neutral steps are evenly spaced and the green reads equally bright in both themes.
+// Set in OKLCH so the neutral steps are evenly spaced and the blue reads equally bright in both themes.
 internal val Ink: Color get() = if (Pal.dark) oklch(0.965f, 0.003f, 265f) else oklch(0.210f, 0.030f, 265f)
 internal val Muted: Color get() = if (Pal.dark) oklch(0.700f, 0.015f, 265f) else oklch(0.520f, 0.018f, 265f)
-internal val Accent: Color get() = if (Pal.dark) oklch(0.800f, 0.180f, 150f) else oklch(0.600f, 0.160f, 150f)
+internal val Accent: Color get() = if (Pal.dark) oklch(0.740f, 0.160f, 245f) else oklch(0.580f, 0.190f, 255f)
 // Dark depth: canvas back, then panels, then bars, each a step lighter.
 internal val Back: Color get() = if (Pal.dark) oklch(0.170f, 0.025f, 265f) else oklch(0.945f, 0.004f, 230f)
 internal val PanelBg: Color get() = if (Pal.dark) oklch(0.215f, 0.028f, 265f) else oklch(0.985f, 0.003f, 250f)
 internal val Bar: Color get() = if (Pal.dark) oklch(0.275f, 0.028f, 265f) else Color.White
-internal val SelBg: Color get() = if (Pal.dark) oklch(0.330f, 0.070f, 150f) else oklch(0.950f, 0.050f, 150f)
+internal val SelBg: Color get() = if (Pal.dark) oklch(0.330f, 0.070f, 250f) else oklch(0.950f, 0.040f, 250f)
 /** Lines are see-through ink, so they read the same on every surface. */
 internal val Line: Color get() = if (Pal.dark) Color.White.copy(alpha = 0.16f) else oklch(0.210f, 0.030f, 265f, 0.16f)
 

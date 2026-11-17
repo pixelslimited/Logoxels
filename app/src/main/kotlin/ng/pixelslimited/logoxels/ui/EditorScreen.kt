@@ -681,7 +681,7 @@ private fun EditorCanvas(ed: Editor) {
                     drawCircle(Accent, 6f, h2)
                 }
                 val o = Offset(c.x - 9f, c.y - 9f)
-                drawRect(if (i == 0) Color(0xFF16A34A) else Color.White, o, Size(18f, 18f))
+                drawRect(if (i == 0) Accent else Color.White, o, Size(18f, 18f))
                 drawRect(Accent, o, Size(18f, 18f), style = Stroke(width = 3f))
             }
         }
