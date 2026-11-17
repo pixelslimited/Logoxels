@@ -16,14 +16,17 @@ internal object Pal {
     var dark by mutableStateOf(false)
 }
 
-internal val Ink: Color get() = if (Pal.dark) Color(0xFFF3F4F6) else Color(0xFF111827)
-internal val Muted: Color get() = if (Pal.dark) Color(0xFF6B7280) else Color(0xFF9CA3AF)
-internal val Accent: Color get() = if (Pal.dark) Color(0xFF4ADE80) else Color(0xFF16A34A)
-internal val Bar: Color get() = if (Pal.dark) Color(0xFF1F2937) else Color.White
-internal val Back: Color get() = if (Pal.dark) Color(0xFF0B1220) else Color(0xFFECEFF1)
-internal val PanelBg: Color get() = if (Pal.dark) Color(0xFF111827) else Color(0xFFF8FAFC)
-internal val SelBg: Color get() = if (Pal.dark) Color(0xFF14532D) else Color(0xFFDCFCE7)
-internal val Line: Color get() = if (Pal.dark) Color(0xFF4B5563) else Color(0xFFD1D5DB)
+// Set in OKLCH so the neutral steps are evenly spaced and the green reads equally bright in both themes.
+internal val Ink: Color get() = if (Pal.dark) oklch(0.965f, 0.003f, 265f) else oklch(0.210f, 0.030f, 265f)
+internal val Muted: Color get() = if (Pal.dark) oklch(0.700f, 0.015f, 265f) else oklch(0.520f, 0.018f, 265f)
+internal val Accent: Color get() = if (Pal.dark) oklch(0.800f, 0.180f, 150f) else oklch(0.600f, 0.160f, 150f)
+// Dark depth: canvas back, then panels, then bars, each a step lighter.
+internal val Back: Color get() = if (Pal.dark) oklch(0.170f, 0.025f, 265f) else oklch(0.945f, 0.004f, 230f)
+internal val PanelBg: Color get() = if (Pal.dark) oklch(0.215f, 0.028f, 265f) else oklch(0.985f, 0.003f, 250f)
+internal val Bar: Color get() = if (Pal.dark) oklch(0.275f, 0.028f, 265f) else Color.White
+internal val SelBg: Color get() = if (Pal.dark) oklch(0.330f, 0.070f, 150f) else oklch(0.950f, 0.050f, 150f)
+/** Lines are see-through ink, so they read the same on every surface. */
+internal val Line: Color get() = if (Pal.dark) Color.White.copy(alpha = 0.16f) else oklch(0.210f, 0.030f, 265f, 0.16f)
 
 /**
  * Interface font. Century Gothic is a licensed font and cannot be shipped with the app, so the build

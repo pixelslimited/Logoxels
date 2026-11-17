@@ -41,17 +41,20 @@ private fun ngon(n: Int, inner: Float, w: Float): Path = Path().apply {
     close()
 }
 
+/** One stroke weight for every glyph, matched to the interface text. */
+private const val WEIGHT = 0.08f
+
 /** Small vector icons drawn in code (no emoji, no icon library). */
 @Composable
 fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
     Canvas(modifier.size(24.dp)) {
         val w = size.width
-        val st = Stroke(width = w * 0.09f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val st = Stroke(width = w * WEIGHT, cap = StrokeCap.Round, join = StrokeJoin.Round)
         fun pt(x: Float, y: Float) = Offset(x * w, y * w)
         fun sz(x: Float, y: Float) = Size(x * w, y * w)
         fun bar(x: Float, y: Float, a: Float, b: Float) = drawRect(tint, pt(x, y), sz(a, b))
         fun box(x: Float, y: Float, a: Float, b: Float) = drawRect(tint, pt(x, y), sz(a, b), style = st)
-        fun ln(x1: Float, y1: Float, x2: Float, y2: Float, k: Float = .07f) =
+        fun ln(x1: Float, y1: Float, x2: Float, y2: Float, k: Float = WEIGHT) =
             drawLine(tint, pt(x1, y1), pt(x2, y2), strokeWidth = w * k, cap = StrokeCap.Round)
         fun tri(a: Offset, b: Offset, c: Offset, fill: Boolean) = drawPath(
             Path().apply { moveTo(a.x, a.y); lineTo(b.x, b.y); lineTo(c.x, c.y); close() },
@@ -79,7 +82,7 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
             G.Oval -> drawOval(tint, pt(.12f, .2f), sz(.76f, .6f), style = st)
             G.Polygon -> drawPath(ngon(6, 0f, w), tint, style = st)
             G.Star -> drawPath(ngon(5, 0.45f, w), tint, style = st)
-            G.Line -> drawLine(tint, pt(.18f, .8f), pt(.82f, .2f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+            G.Line -> drawLine(tint, pt(.18f, .8f), pt(.82f, .2f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
             G.Undo, G.Redo -> scale(if (g == G.Redo) -1f else 1f, 1f, Offset(w / 2f, w / 2f)) {
                 drawPath(Path().apply {
                     moveTo(.2f * w, .42f * w)
@@ -140,21 +143,21 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 drawCircle(tint, radius = w * 0.08f, center = pt(.5f, .33f))
             }
             G.Scissors -> {
-                drawLine(tint, pt(.3f, .72f), pt(.82f, .16f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
-                drawLine(tint, pt(.7f, .72f), pt(.18f, .16f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.3f, .72f), pt(.82f, .16f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
+                drawLine(tint, pt(.7f, .72f), pt(.18f, .16f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
                 drawCircle(tint, radius = w * 0.11f, center = pt(.27f, .8f), style = st)
                 drawCircle(tint, radius = w * 0.11f, center = pt(.73f, .8f), style = st)
             }
             G.Grid -> {
                 for (f in listOf(.3f, .7f)) {
-                    drawLine(tint, pt(f, .14f), pt(f, .86f), strokeWidth = w * 0.07f)
-                    drawLine(tint, pt(.14f, f), pt(.86f, f), strokeWidth = w * 0.07f)
+                    drawLine(tint, pt(f, .14f), pt(f, .86f), strokeWidth = w * WEIGHT)
+                    drawLine(tint, pt(.14f, f), pt(.86f, f), strokeWidth = w * WEIGHT)
                 }
             }
             G.Text -> {
-                drawLine(tint, pt(.2f, .2f), pt(.8f, .2f), strokeWidth = w * 0.11f, cap = StrokeCap.Round)
-                drawLine(tint, pt(.5f, .2f), pt(.5f, .84f), strokeWidth = w * 0.11f, cap = StrokeCap.Round)
-                drawLine(tint, pt(.36f, .84f), pt(.64f, .84f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.2f, .2f), pt(.8f, .2f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
+                drawLine(tint, pt(.5f, .2f), pt(.5f, .84f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
+                drawLine(tint, pt(.36f, .84f), pt(.64f, .84f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
             }
             G.Library -> {
                 drawRect(tint, pt(.12f, .12f), sz(.3f, .3f), style = st)
@@ -162,8 +165,8 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
                 drawPath(Path().apply {
                     moveTo(.27f * w, .58f * w); lineTo(.42f * w, .88f * w); lineTo(.12f * w, .88f * w); close()
                 }, tint, style = st)
-                drawLine(tint, pt(.58f, .62f), pt(.88f, .62f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
-                drawLine(tint, pt(.58f, .8f), pt(.88f, .8f), strokeWidth = w * 0.09f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.58f, .62f), pt(.88f, .62f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
+                drawLine(tint, pt(.58f, .8f), pt(.88f, .8f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
             }
             G.Trace -> {
                 drawRect(tint, pt(.12f, .18f), sz(.76f, .64f), style = st)
@@ -180,10 +183,10 @@ fun Glyph(g: G, tint: Color, modifier: Modifier = Modifier) {
             }
             G.Artboard -> {
                 drawRect(tint, pt(.2f, .2f), sz(.6f, .6f), style = st)
-                drawLine(tint, pt(.08f, .32f), pt(.08f, .08f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
-                drawLine(tint, pt(.08f, .08f), pt(.32f, .08f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
-                drawLine(tint, pt(.92f, .68f), pt(.92f, .92f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
-                drawLine(tint, pt(.92f, .92f), pt(.68f, .92f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
+                drawLine(tint, pt(.08f, .32f), pt(.08f, .08f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
+                drawLine(tint, pt(.08f, .08f), pt(.32f, .08f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
+                drawLine(tint, pt(.92f, .68f), pt(.92f, .92f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
+                drawLine(tint, pt(.92f, .92f), pt(.68f, .92f), strokeWidth = w * WEIGHT, cap = StrokeCap.Round)
             }
             G.Sketch -> drawPath(Path().apply {
                 moveTo(.12f * w, .7f * w)

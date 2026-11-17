@@ -1102,7 +1102,7 @@ private fun ColorRow(current: Int?, allowNone: Boolean, onPick: (Int?) -> Unit) 
     var open by remember { mutableStateOf(false) }
     var seed by remember { mutableStateOf(0) }
     fun edit(c: Int) { seed = c; open = true }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (allowNone) Swatch(null, current == null) { onPick(null) }
         if (current != null && current !in palette) Swatch(current, true) { edit(current) }
         palette.forEach { c -> Swatch(c, current == c, onDouble = { edit(c) }) { onPick(c) } }
@@ -1229,7 +1229,7 @@ private fun ArtboardPanel(ed: Editor) {
     val h = ed.artboard.height()
     PanelBox {
         Label("Artboards")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ed.boards.forEachIndexed { i, b ->
                 Chip(i == ed.activeBoard, { ed.selectBoard(i) }, { Text(b.name, fontSize = 12.sp) })
             }
@@ -1238,7 +1238,7 @@ private fun ArtboardPanel(ed: Editor) {
             if (ed.boards.size > 1) Chip(false, { ed.removeBoard(ed.activeBoard) }, { Text("Delete this one", fontSize = 12.sp) })
         }
         Label("Size of the selected artboard")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
                 "Square" to (1000f to 1000f), "Landscape" to (1600f to 900f), "Portrait" to (900f to 1600f),
                 "Banner" to (1500f to 500f), "App icon" to (512f to 512f),
@@ -1257,7 +1257,7 @@ private fun ArtboardPanel(ed: Editor) {
 private fun SketchPanel(ed: Editor) {
     ed.version
     PanelBox {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip(ed.sketchSnap, { ed.sketchSnap = !ed.sketchSnap }, { Text("Straighten shapes", fontSize = 12.sp) })
         }
         Label(
@@ -1298,7 +1298,7 @@ private fun StylePanel(ed: Editor) {
         val pic = sel.firstNotNullOfOrNull { it.image }
         if (pic != null) {
             Label("Picture colours")
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (c in pic.palette) Swatch(c, false) { ed.useColor(c) }
             }
         }
@@ -1323,7 +1323,7 @@ private fun StylePanel(ed: Editor) {
         SliderRow("Stroke width", first.strokeWidth, 0f..60f, 0, ed::endSlide) { ed.setStrokeWidth(it) }
         if (first.stroke != null) {
             Label("Stroke style")
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Solid", "Dashed", "Dotted").forEachIndexed { i, n -> Chip(first.dash == i, { ed.setDash(i) }, { Text(n, fontSize = 12.sp) }) }
                 listOf("Round ends", "Flat ends", "Square ends").forEachIndexed { i, n -> Chip(first.cap == i, { ed.setCap(i) }, { Text(n, fontSize = 12.sp) }) }
                 listOf("Round joins", "Sharp joins", "Bevel joins").forEachIndexed { i, n -> Chip(first.join == i, { ed.setJoin(i) }, { Text(n, fontSize = 12.sp) }) }
@@ -1346,7 +1346,7 @@ private fun PenPanel(ed: Editor) {
     val n = ed.pen.size
     PanelBox {
         Hint("Tap to add points, drag for curves, tap the green point to close")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Finish open", n >= 2) { ed.penFinish(false) }
             Act("Close shape", n >= 3) { ed.penFinish(true) }
             Act("Undo point", n >= 1) { ed.penUndoPoint() }
@@ -1394,7 +1394,7 @@ private fun TextPanel(ed: Editor) {
         var tv by remember(item.id) { mutableStateOf(spec.text) }
         OutlinedTextField(tv, { tv = it; ed.setText(it) }, Modifier.fillMaxWidth(), label = { Text("Text", fontSize = 12.sp) })
         Label("Font")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             (listOf(TextLayout.APP) + (0 until TextLayout.APP)).forEach { i ->
                 Chip(spec.font == i, { ed.setFont(i) }, { Text(TextLayout.FONTS[i].second, fontSize = 12.sp) })
             }
@@ -1404,7 +1404,7 @@ private fun TextPanel(ed: Editor) {
         SliderRow("Size", spec.size, 20f..400f, 0, ed::endSlide) { ed.setTextSize(it) }
         Label("Layout")
         val others = ed.selectedItems().count { it.kind != Kind.TEXT }
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Plain", true) { ed.textPlain() }
             Act("On path", others >= 1) { ed.textOnPath() }
             Act("In shape", others >= 1) { ed.textInArea(false) }
@@ -1413,7 +1413,7 @@ private fun TextPanel(ed: Editor) {
         }
         if (spec.mode == TextMode.PLAIN) {
             Label("Warp")
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (w in Warp.values()) {
                     Chip(spec.warp == w, { ed.setWarp(w) }, { Text(w.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 12.sp) })
                 }
@@ -1434,7 +1434,7 @@ private fun IconsPanel(ed: Editor) {
         Hint("Tap a shape to add it")
         for ((title, icons) in sections) {
             Text(title, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for ((name, d, path) in icons) {
                     Column(
                         Modifier.width(68.dp).clip(RoundedCornerShape(12.dp)).clickable { ed.insertIcon(d) }.padding(6.dp),
@@ -1453,7 +1453,7 @@ private fun IconsPanel(ed: Editor) {
 private fun TracePanel(ed: Editor, onPick: () -> Unit) {
     ed.version
     PanelBox {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Choose image", true, onPick)
             Chip(ed.traceInvert, { ed.tuneInvert(!ed.traceInvert) }, { Text("Invert", fontSize = 12.sp) })
             Chip(ed.traceSmooth, { ed.tuneSmooth(!ed.traceSmooth) }, { Text("Smooth curves", fontSize = 12.sp) })
@@ -1483,7 +1483,7 @@ private fun NodesPanel(ed: Editor) {
             return@PanelBox
         }
         Hint("Drag points or handles, tap the outline to add a point")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Act("Smooth", has) { ed.nodeMakeSmooth() }
             Act("Corner", has) { ed.nodeMakeCorner() }
             Act("Delete point", has) { ed.nodeRemove() }
@@ -1495,7 +1495,7 @@ private fun NodesPanel(ed: Editor) {
 @Composable
 private fun GridPanel(ed: Editor) {
     PanelBox {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip(ed.showGrid, { ed.showGrid = !ed.showGrid }, { Text("Show grid", fontSize = 12.sp) })
             Chip(ed.snapGrid, { ed.snapGrid = !ed.snapGrid }, { Text("Snap to grid", fontSize = 12.sp) })
             Chip(ed.snapObjects, { ed.snapObjects = !ed.snapObjects }, { Text("Snap to objects", fontSize = 12.sp) })
@@ -1586,10 +1586,10 @@ private fun LayersPanel(ed: Editor) {
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                 )
                 IconButton({ ed.toggleVisible(item) }, Modifier.size(40.dp)) {
-                    Glyph(if (item.visible) G.Eye else G.EyeOff, if (item.visible) Ink else Muted)
+                    SwapIcon(item.visible) { on -> Glyph(if (on) G.Eye else G.EyeOff, if (on) Ink else Muted) }
                 }
                 IconButton({ ed.toggleLock(item) }, Modifier.size(40.dp)) {
-                    Glyph(if (item.locked) G.Lock else G.Unlock, if (item.locked) Ink else Muted)
+                    SwapIcon(item.locked) { on -> Glyph(if (on) G.Lock else G.Unlock, if (on) Ink else Muted) }
                 }
             }
         }
@@ -1641,7 +1641,7 @@ private fun CombinePanel(ed: Editor) {
     ed.version
     val ok = ed.selection.size >= 2
     PanelBox {
-        Row(Modifier.horizontalScroll(rememberScrollState())) {
+        Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }) {
             CombineBtn(G.Union, "Unite", ok) { ed.combine(PfOp.UNION) }
             CombineBtn(G.Minus, "Minus front", ok) { ed.combine(PfOp.MINUS_FRONT) }
             CombineBtn(G.Intersect, "Intersect", ok) { ed.combine(PfOp.INTERSECT) }
@@ -1775,7 +1775,7 @@ private fun QPill(content: @Composable () -> Unit) {
     val shape = RoundedCornerShape(14.dp)
     Box(Modifier.shadow(8.dp, shape).clip(shape).background(Bar)) {
         Row(
-            Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
+            Modifier.fadeEdges(true, scroll.canScrollBackward, scroll.canScrollForward, 32.dp).horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) { content() }
         // a fading arrow on each side that still has buttons hidden beyond it
@@ -1786,9 +1786,8 @@ private fun QPill(content: @Composable () -> Unit) {
 
 @Composable
 private fun BoxScope.EdgeHint(g: G, at: Alignment, fromStart: Boolean) {
-    val fade = if (fromStart) listOf(Bar, Color.Transparent) else listOf(Color.Transparent, Bar)
     Box(
-        Modifier.align(at).width(32.dp).matchParentSize().background(Brush.horizontalGradient(fade)),
+        Modifier.align(at).width(32.dp).matchParentSize(),
         contentAlignment = Alignment.Center,
     ) { Glyph(g, Muted, Modifier.graphicsLayer(scaleX = 0.6f, scaleY = 0.6f)) }
 }
@@ -1822,7 +1821,7 @@ private fun QBtn(g: G, label: String, enabled: Boolean = true, active: Boolean =
         Modifier
             .pressScale()
             .widthIn(min = 56.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(concentric(14.dp, 4.dp)))
             .background(if (active) SelBg else Color.Transparent)
             .then(tap)
             .padding(horizontal = 6.dp, vertical = 4.dp),
