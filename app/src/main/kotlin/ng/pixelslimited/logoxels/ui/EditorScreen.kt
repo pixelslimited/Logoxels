@@ -1654,10 +1654,10 @@ private fun LayersPanel(ed: Editor) {
                     maxLines = 1,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                 )
-                IconButton({ ed.toggleVisible(item) }, Modifier.size(40.dp)) {
+                IconButton({ ed.toggleVisible(item) }, Modifier.size(48.dp)) {
                     SwapIcon(item.visible) { on -> Glyph(if (on) G.Eye else G.EyeOff, if (on) Ink else Muted) }
                 }
-                IconButton({ ed.toggleLock(item) }, Modifier.size(40.dp)) {
+                IconButton({ ed.toggleLock(item) }, Modifier.size(48.dp)) {
                     SwapIcon(item.locked) { on -> Glyph(if (on) G.Lock else G.Unlock, if (on) Ink else Muted) }
                 }
             }
