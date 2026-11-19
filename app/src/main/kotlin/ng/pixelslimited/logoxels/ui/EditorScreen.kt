@@ -162,6 +162,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.OutputStream
+import androidx.compose.ui.text.input.KeyboardCapitalization
 
 private enum class FileOp { NEW, IMPORT, OPEN, SAVE, SVG, PNG, PDF, PSD, EPS, AI }
 
@@ -1233,8 +1234,9 @@ private fun ColorDialog(initial: Int, onDone: (Int) -> Unit, onDismiss: () -> Un
                         Modifier.weight(1f),
                         label = { Text("Hex", fontSize = 12.sp) },
                         prefix = { Text("#", fontSize = 14.sp) },
-                        textStyle = TextStyle(fontSize = 14.sp, color = Ink),
+                        textStyle = TextStyle(fontSize = 16.sp, color = Ink),
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
                     )
                 }
             }
@@ -1412,7 +1414,7 @@ private fun TextPanel(ed: Editor) {
             return@PanelBox
         }
         var tv by remember(item.id) { mutableStateOf(spec.text) }
-        OutlinedTextField(tv, { tv = it; ed.setText(it) }, Modifier.fillMaxWidth(), label = { Text("Text", fontSize = 12.sp) })
+        OutlinedTextField(tv, { tv = it; ed.setText(it) }, Modifier.fillMaxWidth(), label = { Text("Text", fontSize = 12.sp) }, keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done))
         Label("Font")
         Row(run { val hs = rememberScrollState(); Modifier.fadeEdges(true, hs.canScrollBackward, hs.canScrollForward).horizontalScroll(hs) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             (listOf(TextLayout.APP) + (0 until TextLayout.APP)).forEach { i ->
@@ -1479,7 +1481,7 @@ private fun IconsPanel(ed: Editor) {
         }
         val all = remember(lib) { IconLibs.load(ctx, IconLibs.libs[lib].id) }
         val found = remember(lib, query) { IconLibs.search(all, query) }
-        OutlinedTextField(query, { query = it; shown = 30 }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true, label = { Text("Search ${all.size} icons", fontSize = 12.sp) })
+        OutlinedTextField(query, { query = it; shown = 30 }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true, label = { Text("Search ${all.size} icons", fontSize = 12.sp) }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search))
         Hint(if (IconLibs.libs[lib].id.contains("outline") || IconLibs.libs[lib].id == "lucide") "Line icons keep their stroke; Phosphor sets are solid outlines" else "Tap an icon to add it")
         for (row in found.take(shown).chunked(5)) {
             Row(Modifier.fillMaxWidth()) {
@@ -1742,7 +1744,7 @@ private fun NumField(label: String, value: Float, modifier: Modifier, clearAfter
     OutlinedTextField(
         text, { text = it }, modifier.onFocusChanged { if (!it.isFocused) commit() },
         label = { Text(label, fontSize = 12.sp) },
-        textStyle = TextStyle(fontSize = 12.sp, color = Ink),
+        textStyle = TextStyle(fontSize = 16.sp, color = Ink),
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { commit() }),
