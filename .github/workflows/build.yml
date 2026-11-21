@@ -45,6 +45,9 @@ jobs:
           echo "LOGOXELS_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
           echo "LOGOXELS_STORE_PASS=$KS_PASS" >> "$GITHUB_ENV"
       - run: gradle testDebugUnitTest assembleDebug --no-daemon -PbuildNumber=${{ github.run_number }}
+        env:
+          ICODE_ENDPOINT: ${{ secrets.ICODE_ENDPOINT }}
+          ICODE_TOKEN: ${{ secrets.ICODE_TOKEN }}
       - name: Publish APK
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

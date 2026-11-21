@@ -26,6 +26,7 @@ import ng.pixelslimited.logoxels.ui.withFont
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ICode.start(applicationContext, BuildConfig.ICODE_ENDPOINT, BuildConfig.ICODE_TOKEN, BuildConfig.VERSION_NAME)
         enableEdgeToEdge()
         // First run follows the phone's light/dark setting; after that the toggle in the top bar decides.
         val night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES

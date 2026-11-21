@@ -16,6 +16,8 @@ android {
         val build = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
         versionCode = build
         versionName = "0.1.$build"
+        buildConfigField("String", "ICODE_ENDPOINT", "\"" + (System.getenv("ICODE_ENDPOINT") ?: "") + "\"")
+        buildConfigField("String", "ICODE_TOKEN", "\"" + (System.getenv("ICODE_TOKEN") ?: "") + "\"")
     }
 
     // Release key comes from the environment (GitHub secrets in CI); never committed.
@@ -46,7 +48,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
 }
 
 dependencies {
